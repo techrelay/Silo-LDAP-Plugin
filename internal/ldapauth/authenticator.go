@@ -39,6 +39,53 @@ func New(cfg config.Config) *Authenticator {
 	return &Authenticator{config: cfg}
 }
 
+// CheckConnection validates the configured transport, TLS negotiation,
+// search-account bind, base DN, and user-search filter without requiring a
+// real user's password. A deliberately unlikely username is used and zero
+// results are considered successful; the search itself must complete without
+// an LDAP error.
+func (a *Authenticator) CheckConnection(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	filter, err := buildUserFilter(a.config.UserFilter, "__silo_connection_test__")
+	if err != nil {
+		return fmt.Errorf("validate LDAP user filter: %w", err)
+	}
+
+	conn, err := a.dial(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to LDAP: %w", err)
+	}
+	defer conn.Close()
+
+	if a.config.BindDN != "" {
+		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
+			return fmt.Errorf("bind LDAP search account: %w", err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	request := ldap.NewSearchRequest(
+		a.config.BaseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		1,
+		a.config.TimeoutSeconds,
+		false,
+		filter,
+		[]string{"1.1"},
+		nil,
+	)
+	if _, err := conn.Search(request); err != nil {
+		return fmt.Errorf("query LDAP user search base: %w", err)
+	}
+	return nil
+}
+
 func (a *Authenticator) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || password == "" {
@@ -153,7 +200,10 @@ func (a *Authenticator) tlsConfig() (*tls.Config, error) {
 }
 
 func (a *Authenticator) findUser(conn *ldap.Conn, username string) (*ldap.Entry, error) {
-	filter := strings.ReplaceAll(a.config.UserFilter, "{username}", ldap.EscapeFilter(username))
+	filter, err := buildUserFilter(a.config.UserFilter, username)
+	if err != nil {
+		return nil, fmt.Errorf("compile LDAP user filter: %w", err)
+	}
 	attributes := uniqueNonEmpty(
 		a.config.SubjectAttribute,
 		a.config.DisplayNameAttribute,
@@ -179,6 +229,14 @@ func (a *Authenticator) findUser(conn *ldap.Conn, username string) (*ldap.Entry,
 		return nil, ErrInvalidCredentials
 	}
 	return result.Entries[0], nil
+}
+
+func buildUserFilter(template, username string) (string, error) {
+	filter := strings.ReplaceAll(template, "{username}", ldap.EscapeFilter(username))
+	if _, err := ldap.CompileFilter(filter); err != nil {
+		return "", err
+	}
+	return filter, nil
 }
 
 func stableSubject(entry *ldap.Entry, attribute string) (string, error) {
