@@ -1,14 +1,14 @@
 {
   "plugin_id": "techrelay.auth.ldap",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
   "category": "Authentication",
   "presentation": {
     "display_name": "LDAP Authentication",
     "summary": "Authenticate Silo users through LDAP, Synology LDAP Server, or Active Directory.",
-    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, optional direct group allowlisting, and automatic Silo account provisioning.",
-    "setup_markdown": "Install the plugin, open its configuration, and enter your LDAP connection and user-search settings. Keep an existing local Silo administrator account for recovery. New LDAP identities are provisioned as normal Silo users when auto-provisioning is enabled for the provider.",
+    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, optional direct group allowlisting, connection testing, and automatic Silo account provisioning.",
+    "setup_markdown": "Install the plugin, open its configuration, enter your LDAP connection and user-search settings, and use Test connection before saving. Keep an existing local Silo administrator account for recovery. New LDAP identities are provisioned as normal Silo users when auto-provisioning is enabled for the provider.",
     "homepage_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
     "source_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
     "support_url": "https://github.com/zippyy/SiloMediaServer-LDAP/issues",
@@ -27,7 +27,8 @@
       "id": "ldap",
       "display_name": "LDAP",
       "description": "Sign in with an LDAP directory account.",
-      "auth_modes": ["password"]
+      "auth_modes": ["password"],
+      "metadata": {"connection_test": true}
     }
   ],
   "global_config_schema": [
