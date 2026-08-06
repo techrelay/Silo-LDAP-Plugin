@@ -1,9 +1,11 @@
 package ldapauth
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
 )
 
 func TestGroupsAllowed(t *testing.T) {
@@ -25,6 +27,24 @@ func TestGroupsAllowed(t *testing.T) {
 	}
 }
 
+func TestRoleForGroups(t *testing.T) {
+	cfg := config.Default()
+	cfg.RoleSyncEnabled = true
+	cfg.AdminGroups = []string{"CN=JellyfinAdmins,OU=groups,DC=example,DC=com"}
+
+	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
+		t.Fatalf("administrator role = %q, want admin", role)
+	}
+	if role := roleForGroups([]string{"cn=jellyfinusers,ou=groups,dc=example,dc=com"}, cfg); role != "user" {
+		t.Fatalf("normal role = %q, want user", role)
+	}
+
+	cfg.RoleSyncEnabled = false
+	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
+		t.Fatalf("disabled role sync returned %q, want empty", role)
+	}
+}
+
 func TestStableSubjectUsesBinaryObjectGUID(t *testing.T) {
 	entry := &ldap.Entry{Attributes: []*ldap.EntryAttribute{{Name: "objectGUID", ByteValues: [][]byte{{0x01, 0x02, 0xab}}}}}
 	subject, err := stableSubject(entry, "objectGUID")
@@ -33,5 +53,29 @@ func TestStableSubjectUsesBinaryObjectGUID(t *testing.T) {
 	}
 	if subject != "objectguid:0102ab" {
 		t.Fatalf("subject = %q, want objectguid:0102ab", subject)
+	}
+}
+
+func TestBuildUserFilterEscapesUsername(t *testing.T) {
+	filter, err := buildUserFilter(
+		"(&(objectClass=user)(sAMAccountName={username}))",
+		"nick*)(|(objectClass=*))",
+	)
+	if err != nil {
+		t.Fatalf("buildUserFilter returned an error: %v", err)
+	}
+	if strings.Contains(filter, "nick*)(|") {
+		t.Fatalf("username was not escaped: %q", filter)
+	}
+	for _, escaped := range []string{`\2a`, `\28`, `\29`} {
+		if !strings.Contains(filter, escaped) {
+			t.Fatalf("filter %q does not contain escaped sequence %q", filter, escaped)
+		}
+	}
+}
+
+func TestBuildUserFilterRejectsInvalidTemplate(t *testing.T) {
+	if _, err := buildUserFilter("(&(objectClass=user)", "nick"); err == nil {
+		t.Fatal("expected malformed LDAP filter to be rejected")
 	}
 }
