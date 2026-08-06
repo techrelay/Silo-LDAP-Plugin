@@ -65,7 +65,7 @@ func Decode(entries []*pluginv1.ConfigEntry) (Config, bool, error) {
 	cfg.ServerName = stringValue(values, "server_name", cfg.ServerName)
 	cfg.CAPEM = stringValue(values, "ca_pem", cfg.CAPEM)
 	cfg.BindDN = stringValue(values, "bind_dn", cfg.BindDN)
-	cfg.BindPassword = stringValue(values, "bind_password", cfg.BindPassword)
+	cfg.BindPassword = rawStringValue(values, "bind_password", cfg.BindPassword)
 	cfg.BaseDN = stringValue(values, "base_dn", cfg.BaseDN)
 	cfg.UserFilter = stringValue(values, "user_filter", cfg.UserFilter)
 	cfg.SubjectAttribute = stringValue(values, "subject_attribute", cfg.SubjectAttribute)
@@ -137,6 +137,18 @@ func stringValue(values map[string]any, key, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(text)
+}
+
+func rawStringValue(values map[string]any, key, fallback string) string {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return fallback
+	}
+	text, ok := value.(string)
+	if !ok {
+		return fallback
+	}
+	return text
 }
 
 func boolValue(values map[string]any, key string, fallback bool) bool {
