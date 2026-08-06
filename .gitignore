@@ -1,0 +1,5 @@
+/dist/
+/plugin-*
+*.test
+*.out
+.DS_Store
