@@ -41,10 +41,10 @@ func New(cfg config.Config) *Authenticator {
 }
 
 // CheckConnection validates the configured transport, TLS negotiation,
-// search-account bind, base DN, and user-search filter without requiring a
-// real user's password. A deliberately unlikely username is used and zero
-// results are considered successful; the search itself must complete without
-// an LDAP error.
+// search-account bind, base DN, user-search filter, and configured group DNs
+// without requiring a real user's password. A deliberately unlikely username
+// is used and zero results are considered successful; the search itself must
+// complete without an LDAP error.
 func (a *Authenticator) CheckConnection(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -83,6 +83,35 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 	)
 	if _, err := conn.Search(request); err != nil {
 		return fmt.Errorf("query LDAP user search base: %w", err)
+	}
+	if err := a.checkConfiguredGroupDNs(conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *Authenticator) checkConfiguredGroupDNs(conn *ldap.Conn) error {
+	groupDNs := append([]string(nil), a.config.RequiredGroups...)
+	groupDNs = append(groupDNs, a.config.AdminGroups...)
+	for _, groupDN := range uniqueNonEmpty(groupDNs...) {
+		request := ldap.NewSearchRequest(
+			groupDN,
+			ldap.ScopeBaseObject,
+			ldap.NeverDerefAliases,
+			1,
+			a.config.TimeoutSeconds,
+			false,
+			"(objectClass=*)",
+			[]string{"1.1"},
+			nil,
+		)
+		result, err := conn.Search(request)
+		if err != nil {
+			return fmt.Errorf("query configured LDAP group %q: %w", groupDN, err)
+		}
+		if len(result.Entries) != 1 {
+			return fmt.Errorf("configured LDAP group %q was not found", groupDN)
+		}
 	}
 	return nil
 }
