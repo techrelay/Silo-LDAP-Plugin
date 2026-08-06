@@ -86,11 +86,15 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 		return nil, status.Error(codes.Unavailable, "LDAP authentication service is unavailable")
 	}
 
-	claims, err := structpb.NewStruct(map[string]any{
+	claimValues := map[string]any{
 		"username": user.Username,
 		"dn":       user.DN,
 		"groups":   stringsToAny(user.Groups),
-	})
+	}
+	if user.Role != "" {
+		claimValues["silo_role"] = user.Role
+	}
+	claims, err := structpb.NewStruct(claimValues)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "could not construct LDAP identity claims")
 	}
