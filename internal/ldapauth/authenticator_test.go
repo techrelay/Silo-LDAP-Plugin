@@ -1,6 +1,7 @@
 package ldapauth
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
@@ -33,5 +34,29 @@ func TestStableSubjectUsesBinaryObjectGUID(t *testing.T) {
 	}
 	if subject != "objectguid:0102ab" {
 		t.Fatalf("subject = %q, want objectguid:0102ab", subject)
+	}
+}
+
+func TestBuildUserFilterEscapesUsername(t *testing.T) {
+	filter, err := buildUserFilter(
+		"(&(objectClass=user)(sAMAccountName={username}))",
+		"nick*)(|(objectClass=*))",
+	)
+	if err != nil {
+		t.Fatalf("buildUserFilter returned an error: %v", err)
+	}
+	if strings.Contains(filter, "nick*)(|") {
+		t.Fatalf("username was not escaped: %q", filter)
+	}
+	for _, escaped := range []string{`\2a`, `\28`, `\29`} {
+		if !strings.Contains(filter, escaped) {
+			t.Fatalf("filter %q does not contain escaped sequence %q", filter, escaped)
+		}
+	}
+}
+
+func TestBuildUserFilterRejectsInvalidTemplate(t *testing.T) {
+	if _, err := buildUserFilter("(&(objectClass=user)", "nick"); err == nil {
+		t.Fatal("expected malformed LDAP filter to be rejected")
 	}
 }
