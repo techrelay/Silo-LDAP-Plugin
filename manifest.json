@@ -1,14 +1,14 @@
 {
   "plugin_id": "techrelay.auth.ldap",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
   "category": "Authentication",
   "presentation": {
     "display_name": "LDAP Authentication",
     "summary": "Authenticate Silo users through LDAP, Synology LDAP Server, or Active Directory.",
-    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, optional direct group allowlisting, connection testing, and automatic Silo account provisioning.",
-    "setup_markdown": "Install the plugin, open its configuration, enter your LDAP connection and user-search settings, and use Test connection before saving. Keep an existing local Silo administrator account for recovery. New LDAP identities are provisioned as normal Silo users when auto-provisioning is enabled for the provider.",
+    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, direct group allowlisting, connection testing, Active Directory group-to-role synchronization, and automatic Silo account provisioning.",
+    "setup_markdown": "Install the plugin, open its configuration, enter your LDAP connection and user-search settings, and use Test connection before saving. For Active Directory role synchronization, use the user group as the sign-in allowlist and configure the administrator group in Role synchronization. Keep an existing local Silo administrator account for recovery.",
     "homepage_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
     "source_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
     "support_url": "https://github.com/zippyy/SiloMediaServer-LDAP/issues",
@@ -35,8 +35,8 @@
     {
       "key": "ldap",
       "title": "LDAP authentication",
-      "description": "Connection, search, TLS, and group-access settings.",
-      "json_schema": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"url\":{\"type\":\"string\",\"minLength\":1,\"pattern\":\"^ldaps?://\"},\"start_tls\":{\"type\":\"boolean\"},\"allow_insecure_plaintext\":{\"type\":\"boolean\"},\"bind_dn\":{\"type\":\"string\"},\"bind_password\":{\"type\":\"string\"},\"base_dn\":{\"type\":\"string\",\"minLength\":1},\"user_filter\":{\"type\":\"string\",\"minLength\":1},\"subject_attribute\":{\"type\":\"string\",\"minLength\":1},\"display_name_attribute\":{\"type\":\"string\"},\"email_attribute\":{\"type\":\"string\"},\"group_attribute\":{\"type\":\"string\"},\"required_groups\":{\"type\":\"string\"},\"group_match_mode\":{\"type\":\"string\",\"enum\":[\"any\",\"all\"]},\"server_name\":{\"type\":\"string\"},\"ca_pem\":{\"type\":\"string\"},\"insecure_skip_verify\":{\"type\":\"boolean\"},\"timeout_seconds\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":60}},\"required\":[\"url\",\"base_dn\",\"user_filter\",\"subject_attribute\"]}",
+      "description": "Connection, search, TLS, group-access, and role-synchronization settings.",
+      "json_schema": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"url\":{\"type\":\"string\",\"minLength\":1,\"pattern\":\"^ldaps?://\"},\"start_tls\":{\"type\":\"boolean\"},\"allow_insecure_plaintext\":{\"type\":\"boolean\"},\"bind_dn\":{\"type\":\"string\"},\"bind_password\":{\"type\":\"string\"},\"base_dn\":{\"type\":\"string\",\"minLength\":1},\"user_filter\":{\"type\":\"string\",\"minLength\":1},\"subject_attribute\":{\"type\":\"string\",\"minLength\":1},\"display_name_attribute\":{\"type\":\"string\"},\"email_attribute\":{\"type\":\"string\"},\"group_attribute\":{\"type\":\"string\"},\"required_groups\":{\"type\":\"string\"},\"group_match_mode\":{\"type\":\"string\",\"enum\":[\"any\",\"all\"]},\"role_sync_enabled\":{\"type\":\"boolean\"},\"admin_groups\":{\"type\":\"string\"},\"admin_group_match_mode\":{\"type\":\"string\",\"enum\":[\"any\",\"all\"]},\"server_name\":{\"type\":\"string\"},\"ca_pem\":{\"type\":\"string\"},\"insecure_skip_verify\":{\"type\":\"boolean\"},\"timeout_seconds\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":60}},\"required\":[\"url\",\"base_dn\",\"user_filter\",\"subject_attribute\"]}",
       "required": false,
       "admin_form": {
         "submit_label": "Save LDAP settings",
@@ -51,9 +51,12 @@
           {"key":"subject_attribute","label":"Stable subject attribute","description":"Use entryUUID for OpenLDAP/Synology LDAP or objectGUID for Active Directory.","control":"ADMIN_FORM_CONTROL_TEXT","required":true,"default_value":"entryUUID","validation":{"min_length":1}},
           {"key":"display_name_attribute","label":"Display name attribute","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"displayName"},
           {"key":"email_attribute","label":"Email attribute","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"mail"},
-          {"key":"group_attribute","label":"Group membership attribute","description":"Usually memberOf. Direct membership only in the first release.","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"memberOf"},
-          {"key":"required_groups","label":"Required group DNs","description":"Optional. Enter one group DN per line. Login is denied when the configured match rule is not met.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":4,"placeholder":"cn=silo-users,ou=groups,dc=example,dc=com"},
-          {"key":"group_match_mode","label":"Required-group match","control":"ADMIN_FORM_CONTROL_SELECT","default_value":"any","options":[{"value":"any","label":"Any configured group"},{"value":"all","label":"All configured groups"}]},
+          {"key":"group_attribute","label":"Group membership attribute","description":"Usually memberOf. Direct membership is evaluated.","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"memberOf"},
+          {"key":"required_groups","label":"Sign-in group DNs","description":"Optional sign-in allowlist. Enter one group DN per line. For your AD, use CN=JellyfinUsers,OU=groups,DC=nbennett,DC=xyz. Administrator accounts must also satisfy this allowlist.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":4,"placeholder":"CN=JellyfinUsers,OU=groups,DC=example,DC=com"},
+          {"key":"group_match_mode","label":"Sign-in group match","control":"ADMIN_FORM_CONTROL_SELECT","default_value":"any","options":[{"value":"any","label":"Any configured group"},{"value":"all","label":"All configured groups"}]},
+          {"key":"role_sync_enabled","label":"Synchronize Silo roles from LDAP","description":"When enabled, administrator-group members are Silo admins and all other allowed LDAP users are Silo users. Role changes are applied at login.","control":"ADMIN_FORM_CONTROL_SWITCH","default_value":false},
+          {"key":"admin_groups","label":"Administrator group DNs","description":"Enter one administrator group DN per line. For your AD, use CN=JellyfinAdmins,OU=groups,DC=nbennett,DC=xyz.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":3,"placeholder":"CN=JellyfinAdmins,OU=groups,DC=example,DC=com"},
+          {"key":"admin_group_match_mode","label":"Administrator group match","control":"ADMIN_FORM_CONTROL_SELECT","default_value":"any","options":[{"value":"any","label":"Any configured administrator group"},{"value":"all","label":"All configured administrator groups"}]},
           {"key":"server_name","label":"TLS server name override","description":"Leave blank to use the hostname from the LDAP URL.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"ldap.example.com"},
           {"key":"ca_pem","label":"Custom CA certificate","description":"Optional PEM certificate for a private LDAP certificate authority.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":6,"placeholder":"-----BEGIN CERTIFICATE-----"},
           {"key":"insecure_skip_verify","label":"Skip TLS certificate verification","description":"Dangerous troubleshooting option. Do not enable in production.","control":"ADMIN_FORM_CONTROL_SWITCH","default_value":false},
@@ -63,7 +66,8 @@
           {"key":"connection","title":"Connection","description":"How Silo reaches and securely connects to the directory.","field_keys":["url","start_tls","allow_insecure_plaintext","timeout_seconds"]},
           {"key":"search","title":"Directory search","description":"How the plugin finds a user before verifying the submitted password.","field_keys":["bind_dn","bind_password","base_dn","user_filter"]},
           {"key":"identity","title":"Identity mapping","description":"Attributes returned to Silo after successful authentication.","field_keys":["subject_attribute","display_name_attribute","email_attribute"]},
-          {"key":"groups","title":"Access control","description":"Optional direct LDAP group allowlisting.","collapsible":true,"field_keys":["group_attribute","required_groups","group_match_mode"]},
+          {"key":"groups","title":"Sign-in access control","description":"Optional direct LDAP group allowlisting.","collapsible":true,"field_keys":["group_attribute","required_groups","group_match_mode"]},
+          {"key":"roles","title":"Role synchronization","description":"Map LDAP administrator groups to the Silo administrator role.","collapsible":true,"field_keys":["role_sync_enabled","admin_groups","admin_group_match_mode"]},
           {"key":"tls","title":"Advanced TLS","collapsible":true,"collapsed_default":true,"field_keys":["server_name","ca_pem","insecure_skip_verify"]}
         ]
       }
