@@ -71,6 +71,13 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 		return nil, status.Error(codes.FailedPrecondition, "LDAP authentication is not configured")
 	}
 
+	if connectionTestRequested(req.GetMetadata()) {
+		if err := authenticator.CheckConnection(ctx); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "LDAP connection check failed: %v", err)
+		}
+		return &pluginv1.AuthenticateResponse{}, nil
+	}
+
 	user, err := authenticator.Authenticate(ctx, req.GetUsername(), req.GetPassword())
 	if err != nil {
 		if errors.Is(err, ldapauth.ErrInvalidCredentials) || errors.Is(err, ldapauth.ErrGroupDenied) {
@@ -93,6 +100,14 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 		Email:           user.Email,
 		Claims:          claims,
 	}, nil
+}
+
+func connectionTestRequested(metadata *structpb.Struct) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata.AsMap()["connection_test"].(bool)
+	return ok && value
 }
 
 func stringsToAny(values []string) []any {
