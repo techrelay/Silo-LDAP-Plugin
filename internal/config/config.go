@@ -190,7 +190,7 @@ func intValue(values map[string]any, key string, fallback int) int {
 
 func splitList(value string) []string {
 	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == ',' || r == ';'
+		return r == '\n' || r == '\r' || r == ';'
 	})
 	result := make([]string, 0, len(parts))
 	seen := make(map[string]struct{}, len(parts))
