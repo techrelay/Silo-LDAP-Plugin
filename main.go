@@ -5,6 +5,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
@@ -83,7 +85,9 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 		if errors.Is(err, ldapauth.ErrInvalidCredentials) || errors.Is(err, ldapauth.ErrGroupDenied) {
 			return &pluginv1.AuthenticateResponse{}, nil
 		}
-		return nil, status.Error(codes.Unavailable, "LDAP authentication service is unavailable")
+		stage := ldapAuthenticationFailureStage(err)
+		slog.Error("LDAP authentication failed", "stage", stage, "error", err)
+		return nil, status.Errorf(codes.Unavailable, "LDAP authentication failed during %s: %v", stage, err)
 	}
 
 	claimValues := map[string]any{
@@ -104,6 +108,36 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 		Email:           user.Email,
 		Claims:          claims,
 	}, nil
+}
+
+func ldapAuthenticationFailureStage(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "request"
+	}
+
+	message := err.Error()
+	switch {
+	case strings.HasPrefix(message, "connect to LDAP:"):
+		return "connection"
+	case strings.HasPrefix(message, "bind LDAP search account:"):
+		return "search-account bind"
+	case strings.HasPrefix(message, "compile LDAP user filter:"):
+		return "user-filter compilation"
+	case strings.HasPrefix(message, "search LDAP user:"):
+		return "user search"
+	case strings.HasPrefix(message, "bind LDAP user:"):
+		return "user bind"
+	case strings.HasPrefix(message, "LDAP subject attribute"):
+		return "stable-subject mapping"
+	default:
+		return "directory processing"
+	}
 }
 
 func connectionTestRequested(metadata *structpb.Struct) bool {
