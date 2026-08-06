@@ -29,6 +29,7 @@ type User struct {
 	Email       string
 	DN          string
 	Groups      []string
+	Role        string
 }
 
 type Authenticator struct {
@@ -142,7 +143,18 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		Email:       strings.TrimSpace(entry.GetEqualFoldAttributeValue(a.config.EmailAttribute)),
 		DN:          entry.DN,
 		Groups:      append([]string(nil), groups...),
+		Role:        roleForGroups(groups, a.config),
 	}, nil
+}
+
+func roleForGroups(groups []string, cfg config.Config) string {
+	if !cfg.RoleSyncEnabled {
+		return ""
+	}
+	if groupsAllowed(groups, cfg.AdminGroups, cfg.AdminGroupMatchMode) {
+		return "admin"
+	}
+	return "user"
 }
 
 func (a *Authenticator) dial(ctx context.Context) (*ldap.Conn, error) {
