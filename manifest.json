@@ -1,0 +1,71 @@
+{
+  "plugin_id": "techrelay.auth.ldap",
+  "version": "0.1.0",
+  "checksum": "__CHECKSUM__",
+  "silo_api_version": "v1",
+  "category": "Authentication",
+  "presentation": {
+    "display_name": "LDAP Authentication",
+    "summary": "Authenticate Silo users through LDAP, Synology LDAP Server, or Active Directory.",
+    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, optional direct group allowlisting, and automatic Silo account provisioning.",
+    "setup_markdown": "Install the plugin, open its configuration, and enter your LDAP connection and user-search settings. Keep an existing local Silo administrator account for recovery. New LDAP identities are provisioned as normal Silo users when auto-provisioning is enabled for the provider.",
+    "homepage_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
+    "source_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
+    "support_url": "https://github.com/zippyy/SiloMediaServer-LDAP/issues",
+    "changelog_url": "https://github.com/zippyy/SiloMediaServer-LDAP/releases",
+    "publisher_name": "Tech Relay",
+    "publisher_url": "https://techrelay.xyz",
+    "license_spdx": "MIT"
+  },
+  "supported_platforms": [
+    {"os": "linux", "arch": "amd64"},
+    {"os": "linux", "arch": "arm64"}
+  ],
+  "capabilities": [
+    {
+      "type": "auth_provider.v1",
+      "id": "ldap",
+      "display_name": "LDAP",
+      "description": "Sign in with an LDAP directory account.",
+      "auth_modes": ["password"]
+    }
+  ],
+  "global_config_schema": [
+    {
+      "key": "ldap",
+      "title": "LDAP authentication",
+      "description": "Connection, search, TLS, and group-access settings.",
+      "json_schema": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"url\":{\"type\":\"string\",\"minLength\":1,\"pattern\":\"^ldaps?://\"},\"start_tls\":{\"type\":\"boolean\"},\"allow_insecure_plaintext\":{\"type\":\"boolean\"},\"bind_dn\":{\"type\":\"string\"},\"bind_password\":{\"type\":\"string\"},\"base_dn\":{\"type\":\"string\",\"minLength\":1},\"user_filter\":{\"type\":\"string\",\"minLength\":1},\"subject_attribute\":{\"type\":\"string\",\"minLength\":1},\"display_name_attribute\":{\"type\":\"string\"},\"email_attribute\":{\"type\":\"string\"},\"group_attribute\":{\"type\":\"string\"},\"required_groups\":{\"type\":\"string\"},\"group_match_mode\":{\"type\":\"string\",\"enum\":[\"any\",\"all\"]},\"server_name\":{\"type\":\"string\"},\"ca_pem\":{\"type\":\"string\"},\"insecure_skip_verify\":{\"type\":\"boolean\"},\"timeout_seconds\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":60}},\"required\":[\"url\",\"base_dn\",\"user_filter\",\"subject_attribute\"]}",
+      "required": false,
+      "admin_form": {
+        "submit_label": "Save LDAP settings",
+        "fields": [
+          {"key":"url","label":"LDAP URL","description":"Use ldaps:// for implicit TLS or ldap:// with StartTLS.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"ldaps://ldap.example.com:636","required":true,"validation":{"pattern":"^ldaps?://","min_length":1}},
+          {"key":"start_tls","label":"Use StartTLS","description":"Upgrade an ldap:// connection to TLS before binding.","control":"ADMIN_FORM_CONTROL_SWITCH","default_value":false},
+          {"key":"allow_insecure_plaintext","label":"Allow plaintext LDAP","description":"Dangerous: permit ldap:// without StartTLS. Credentials will cross the network unencrypted.","control":"ADMIN_FORM_CONTROL_SWITCH","default_value":false},
+          {"key":"bind_dn","label":"Search account bind DN","description":"Optional read-only account used to find the user entry.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"cn=silo-reader,ou=service-accounts,dc=example,dc=com"},
+          {"key":"bind_password","label":"Search account password","control":"ADMIN_FORM_CONTROL_PASSWORD","secret":true},
+          {"key":"base_dn","label":"User search base DN","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"dc=example,dc=com","required":true,"validation":{"min_length":1}},
+          {"key":"user_filter","label":"User search filter","description":"{username} is safely escaped and replaced at login.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"(&(objectClass=person)(uid={username}))","required":true,"default_value":"(&(objectClass=person)(|(uid={username})(sAMAccountName={username})))","validation":{"min_length":1}},
+          {"key":"subject_attribute","label":"Stable subject attribute","description":"Use entryUUID for OpenLDAP/Synology LDAP or objectGUID for Active Directory.","control":"ADMIN_FORM_CONTROL_TEXT","required":true,"default_value":"entryUUID","validation":{"min_length":1}},
+          {"key":"display_name_attribute","label":"Display name attribute","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"displayName"},
+          {"key":"email_attribute","label":"Email attribute","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"mail"},
+          {"key":"group_attribute","label":"Group membership attribute","description":"Usually memberOf. Direct membership only in the first release.","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"memberOf"},
+          {"key":"required_groups","label":"Required group DNs","description":"Optional. Enter one group DN per line. Login is denied when the configured match rule is not met.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":4,"placeholder":"cn=silo-users,ou=groups,dc=example,dc=com"},
+          {"key":"group_match_mode","label":"Required-group match","control":"ADMIN_FORM_CONTROL_SELECT","default_value":"any","options":[{"value":"any","label":"Any configured group"},{"value":"all","label":"All configured groups"}]},
+          {"key":"server_name","label":"TLS server name override","description":"Leave blank to use the hostname from the LDAP URL.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"ldap.example.com"},
+          {"key":"ca_pem","label":"Custom CA certificate","description":"Optional PEM certificate for a private LDAP certificate authority.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":6,"placeholder":"-----BEGIN CERTIFICATE-----"},
+          {"key":"insecure_skip_verify","label":"Skip TLS certificate verification","description":"Dangerous troubleshooting option. Do not enable in production.","control":"ADMIN_FORM_CONTROL_SWITCH","default_value":false},
+          {"key":"timeout_seconds","label":"Connection and search timeout","control":"ADMIN_FORM_CONTROL_NUMBER","default_value":10,"validation":{"has_min":true,"min":1,"has_max":true,"max":60}}
+        ],
+        "sections": [
+          {"key":"connection","title":"Connection","description":"How Silo reaches and securely connects to the directory.","field_keys":["url","start_tls","allow_insecure_plaintext","timeout_seconds"]},
+          {"key":"search","title":"Directory search","description":"How the plugin finds a user before verifying the submitted password.","field_keys":["bind_dn","bind_password","base_dn","user_filter"]},
+          {"key":"identity","title":"Identity mapping","description":"Attributes returned to Silo after successful authentication.","field_keys":["subject_attribute","display_name_attribute","email_attribute"]},
+          {"key":"groups","title":"Access control","description":"Optional direct LDAP group allowlisting.","collapsible":true,"field_keys":["group_attribute","required_groups","group_match_mode"]},
+          {"key":"tls","title":"Advanced TLS","collapsible":true,"collapsed_default":true,"field_keys":["server_name","ca_pem","insecure_skip_verify"]}
+        ]
+      }
+    }
+  ]
+}

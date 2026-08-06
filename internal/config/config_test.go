@@ -1,0 +1,60 @@
+package config
+
+import (
+	"testing"
+
+	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+func TestDecodeAllowsMissingConfig(t *testing.T) {
+	cfg, configured, err := Decode(nil)
+	if err != nil {
+		t.Fatalf("Decode returned an error: %v", err)
+	}
+	if configured {
+		t.Fatal("expected missing configuration to remain unconfigured")
+	}
+	if cfg.TimeoutSeconds != 10 {
+		t.Fatalf("default timeout = %d, want 10", cfg.TimeoutSeconds)
+	}
+}
+
+func TestDecodeValidLDAPSConfig(t *testing.T) {
+	value, err := structpb.NewStruct(map[string]any{
+		"url":               "ldaps://ldap.example.com:636",
+		"base_dn":           "dc=example,dc=com",
+		"bind_dn":           "cn=silo,dc=example,dc=com",
+		"bind_password":     "secret",
+		"required_groups":   "cn=silo-users,ou=groups,dc=example,dc=com\ncn=media,ou=groups,dc=example,dc=com",
+		"group_match_mode":  "all",
+		"timeout_seconds":   15,
+		"subject_attribute": "entryUUID",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, configured, err := Decode([]*pluginv1.ConfigEntry{{Key: EntryKey, Value: value}})
+	if err != nil {
+		t.Fatalf("Decode returned an error: %v", err)
+	}
+	if !configured {
+		t.Fatal("expected configuration to be detected")
+	}
+	if len(cfg.RequiredGroups) != 2 {
+		t.Fatalf("required groups = %d, want 2", len(cfg.RequiredGroups))
+	}
+	if cfg.GroupMatchMode != "all" {
+		t.Fatalf("group match mode = %q, want all", cfg.GroupMatchMode)
+	}
+}
+
+func TestValidateRejectsPlaintextByDefault(t *testing.T) {
+	cfg := Default()
+	cfg.URL = "ldap://ldap.example.com:389"
+	cfg.BaseDN = "dc=example,dc=com"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected plaintext LDAP configuration to be rejected")
+	}
+}

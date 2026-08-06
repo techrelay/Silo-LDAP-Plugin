@@ -1,0 +1,124 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"errors"
+	"fmt"
+	"sync"
+
+	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
+	publicmanifest "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/manifest"
+	sdkruntime "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/runtime"
+	"github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/runtimedefault"
+	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
+	"github.com/zippyy/SiloMediaServer-LDAP/internal/ldapauth"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+var version string
+
+//go:embed manifest.json
+var manifestJSON []byte
+
+type runtimeServer struct {
+	runtimedefault.Server
+
+	manifest *pluginv1.PluginManifest
+	auth     *authServer
+}
+
+func (s *runtimeServer) GetManifest(context.Context, *pluginv1.GetManifestRequest) (*pluginv1.GetManifestResponse, error) {
+	return &pluginv1.GetManifestResponse{
+		Manifest: proto.Clone(s.manifest).(*pluginv1.PluginManifest),
+	}, nil
+}
+
+func (s *runtimeServer) Configure(_ context.Context, req *pluginv1.ConfigureRequest) (*pluginv1.ConfigureResponse, error) {
+	cfg, configured, err := config.Decode(req.GetConfig())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid LDAP configuration: %v", err)
+	}
+	if !configured {
+		s.auth.SetAuthenticator(nil)
+		return &pluginv1.ConfigureResponse{}, nil
+	}
+	s.auth.SetAuthenticator(ldapauth.New(cfg))
+	return &pluginv1.ConfigureResponse{}, nil
+}
+
+type authServer struct {
+	pluginv1.UnimplementedAuthProviderServer
+
+	mu            sync.RWMutex
+	authenticator *ldapauth.Authenticator
+}
+
+func (s *authServer) SetAuthenticator(authenticator *ldapauth.Authenticator) {
+	s.mu.Lock()
+	s.authenticator = authenticator
+	s.mu.Unlock()
+}
+
+func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.AuthenticateRequest) (*pluginv1.AuthenticateResponse, error) {
+	s.mu.RLock()
+	authenticator := s.authenticator
+	s.mu.RUnlock()
+	if authenticator == nil {
+		return nil, status.Error(codes.FailedPrecondition, "LDAP authentication is not configured")
+	}
+
+	user, err := authenticator.Authenticate(ctx, req.GetUsername(), req.GetPassword())
+	if err != nil {
+		if errors.Is(err, ldapauth.ErrInvalidCredentials) || errors.Is(err, ldapauth.ErrGroupDenied) {
+			return &pluginv1.AuthenticateResponse{}, nil
+		}
+		return nil, status.Error(codes.Unavailable, "LDAP authentication service is unavailable")
+	}
+
+	claims, err := structpb.NewStruct(map[string]any{
+		"username": user.Username,
+		"dn":       user.DN,
+		"groups":   stringsToAny(user.Groups),
+	})
+	if err != nil {
+		return nil, status.Error(codes.Internal, "could not construct LDAP identity claims")
+	}
+	return &pluginv1.AuthenticateResponse{
+		ExternalSubject: user.Subject,
+		DisplayName:     user.DisplayName,
+		Email:           user.Email,
+		Claims:          claims,
+	}, nil
+}
+
+func stringsToAny(values []string) []any {
+	result := make([]any, len(values))
+	for index, value := range values {
+		result[index] = value
+	}
+	return result
+}
+
+func main() {
+	manifest, err := publicmanifest.LoadWithChecksum(manifestJSON, version)
+	if err != nil {
+		panic(fmt.Errorf("load plugin manifest: %w", err))
+	}
+
+	auth := &authServer{}
+	runtime := &runtimeServer{
+		manifest: manifest,
+		auth:     auth,
+	}
+
+	sdkruntime.Serve(sdkruntime.ServeConfig{
+		Servers: sdkruntime.CapabilityServers{
+			Runtime:      runtime,
+			AuthProvider: auth,
+		},
+	})
+}
