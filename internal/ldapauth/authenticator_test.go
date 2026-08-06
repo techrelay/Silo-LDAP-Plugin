@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
 )
 
 func TestGroupsAllowed(t *testing.T) {
@@ -23,6 +24,24 @@ func TestGroupsAllowed(t *testing.T) {
 	}
 	if groupsAllowed(actual, []string{"cn=admins,dc=example,dc=com"}, "any") {
 		t.Fatal("unexpected group match")
+	}
+}
+
+func TestRoleForGroups(t *testing.T) {
+	cfg := config.Default()
+	cfg.RoleSyncEnabled = true
+	cfg.AdminGroups = []string{"CN=JellyfinAdmins,OU=groups,DC=example,DC=com"}
+
+	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
+		t.Fatalf("administrator role = %q, want admin", role)
+	}
+	if role := roleForGroups([]string{"cn=jellyfinusers,ou=groups,dc=example,dc=com"}, cfg); role != "user" {
+		t.Fatalf("normal role = %q, want user", role)
+	}
+
+	cfg.RoleSyncEnabled = false
+	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
+		t.Fatalf("disabled role sync returned %q, want empty", role)
 	}
 }
 
