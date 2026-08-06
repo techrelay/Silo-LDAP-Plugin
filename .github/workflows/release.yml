@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+          else
+            version=$(jq -r '.version' manifest.json)
+            tag="v${version}"
+            git tag "$tag"
+            git push origin "refs/tags/${tag}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Build plugin
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          GOWORK: off
+        run: |
+          mkdir -p dist
+          binary="plugin-${GOOS}-${GOARCH}"
+          version="${{ needs.version.outputs.version }}"
+          go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "dist/${binary}" .
+          checksum=$(sha256sum "dist/${binary}" | awk '{print $1}')
+          printf '%s  %s\n' "$checksum" "$binary" > "dist/checksums-${GOOS}-${GOARCH}.txt"
+          sed "s/__CHECKSUM__/${checksum}/" manifest.json > "dist/manifest-${GOOS}-${GOARCH}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          : > release/checksums.txt
+          for dir in artifacts/plugin-*; do
+            cp "$dir"/plugin-* release/
+            cat "$dir"/checksums-*.txt >> release/checksums.txt
+          done
+          sort -u -o release/checksums.txt release/checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: |
+            release/plugin-linux-amd64
+            release/plugin-linux-arm64
+            release/checksums.txt
+          generate_release_notes: true
