@@ -29,6 +29,9 @@ type Config struct {
 	GroupAttribute         string
 	RequiredGroups         []string
 	GroupMatchMode         string
+	RoleSyncEnabled        bool
+	AdminGroups            []string
+	AdminGroupMatchMode    string
 	TimeoutSeconds         int
 }
 
@@ -40,6 +43,7 @@ func Default() Config {
 		EmailAttribute:       "mail",
 		GroupAttribute:       "memberOf",
 		GroupMatchMode:       "any",
+		AdminGroupMatchMode:  "any",
 		TimeoutSeconds:       10,
 	}
 }
@@ -74,6 +78,9 @@ func Decode(entries []*pluginv1.ConfigEntry) (Config, bool, error) {
 	cfg.GroupAttribute = stringValue(values, "group_attribute", cfg.GroupAttribute)
 	cfg.RequiredGroups = splitList(stringValue(values, "required_groups", ""))
 	cfg.GroupMatchMode = strings.ToLower(stringValue(values, "group_match_mode", cfg.GroupMatchMode))
+	cfg.RoleSyncEnabled = boolValue(values, "role_sync_enabled", cfg.RoleSyncEnabled)
+	cfg.AdminGroups = splitList(stringValue(values, "admin_groups", ""))
+	cfg.AdminGroupMatchMode = strings.ToLower(stringValue(values, "admin_group_match_mode", cfg.AdminGroupMatchMode))
 	cfg.TimeoutSeconds = intValue(values, "timeout_seconds", cfg.TimeoutSeconds)
 
 	if err := cfg.Validate(); err != nil {
@@ -111,11 +118,17 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.SubjectAttribute) == "" {
 		return fmt.Errorf("subject attribute is required")
 	}
-	if len(c.RequiredGroups) > 0 && strings.TrimSpace(c.GroupAttribute) == "" {
-		return fmt.Errorf("group attribute is required when required groups are configured")
+	if (len(c.RequiredGroups) > 0 || len(c.AdminGroups) > 0) && strings.TrimSpace(c.GroupAttribute) == "" {
+		return fmt.Errorf("group attribute is required when group access or role mapping is configured")
 	}
 	if c.GroupMatchMode != "any" && c.GroupMatchMode != "all" {
 		return fmt.Errorf("group match mode must be any or all")
+	}
+	if c.AdminGroupMatchMode != "any" && c.AdminGroupMatchMode != "all" {
+		return fmt.Errorf("administrator group match mode must be any or all")
+	}
+	if c.RoleSyncEnabled && len(c.AdminGroups) == 0 {
+		return fmt.Errorf("at least one administrator group is required when role synchronization is enabled")
 	}
 	if c.TimeoutSeconds < 1 || c.TimeoutSeconds > 60 {
 		return fmt.Errorf("timeout must be between 1 and 60 seconds")
