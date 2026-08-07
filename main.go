@@ -21,10 +21,15 @@ import (
 )
 
 const (
-	connectionTestMetadataKey = "connection_test"
-	connectionTestAckClaimKey = "silo_connection_test_ok"
-	siloRoleClaimKey          = "silo_role"
-	siloRoleManagedClaimKey   = "silo_role_managed"
+	connectionTestMetadataKey              = "connection_test"
+	connectionTestContractMetadataKey      = "connection_test_contract"
+	connectionTestContractV1               = "silo.auth.connection-test.v1"
+	connectionTestAckClaimKey              = "silo_connection_test_ok"
+	connectionTestResponseContractClaimKey = "silo_connection_test_contract"
+	siloRoleClaimKey                       = "silo_role"
+	siloRoleManagedClaimKey                = "silo_role_managed"
+	siloRoleContractClaimKey               = "silo_role_contract"
+	siloRoleContractV1                     = "silo.auth.managed-role.v1"
 )
 
 var version string
@@ -90,7 +95,10 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 			slog.ErrorContext(ctx, "LDAP connection check failed", "stage", stage, "error", err)
 			return nil, status.Errorf(codes.Unavailable, "LDAP connection check failed during %s", stage)
 		}
-		claims, err := structpb.NewStruct(map[string]any{connectionTestAckClaimKey: true})
+		claims, err := structpb.NewStruct(map[string]any{
+			connectionTestAckClaimKey:              true,
+			connectionTestResponseContractClaimKey: connectionTestContractV1,
+		})
 		if err != nil {
 			return nil, status.Error(codes.Internal, "could not construct LDAP connection-check response")
 		}
@@ -113,6 +121,7 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 		"groups":   stringsToAny(user.Groups),
 	}
 	if user.Role != "" {
+		claimValues[siloRoleContractClaimKey] = siloRoleContractV1
 		claimValues[siloRoleClaimKey] = user.Role
 		claimValues[siloRoleManagedClaimKey] = true
 	}
@@ -132,8 +141,13 @@ func connectionTestRequested(metadata *structpb.Struct) bool {
 	if metadata == nil {
 		return false
 	}
-	value, ok := metadata.AsMap()[connectionTestMetadataKey].(bool)
-	return ok && value
+	values := metadata.AsMap()
+	requested, ok := values[connectionTestMetadataKey].(bool)
+	if !ok || !requested {
+		return false
+	}
+	contract, ok := values[connectionTestContractMetadataKey].(string)
+	return ok && contract == connectionTestContractV1
 }
 
 func stringsToAny(values []string) []any {
