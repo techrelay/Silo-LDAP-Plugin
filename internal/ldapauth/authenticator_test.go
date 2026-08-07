@@ -2,6 +2,7 @@ package ldapauth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,46 @@ import (
 	"github.com/go-ldap/ldap/v3"
 	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
 )
+
+type fakeLDAPConnection struct {
+	entries    []*ldap.Entry
+	searchErr  error
+	bindErrors map[string]error
+	operations []string
+	timeout    time.Duration
+	closed     bool
+}
+
+func (f *fakeLDAPConnection) Bind(username, _ string) error {
+	f.operations = append(f.operations, "bind:"+username)
+	if f.bindErrors != nil {
+		return f.bindErrors[username]
+	}
+	return nil
+}
+
+func (f *fakeLDAPConnection) Search(*ldap.SearchRequest) (*ldap.SearchResult, error) {
+	f.operations = append(f.operations, "search")
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	return &ldap.SearchResult{Entries: f.entries}, nil
+}
+
+func (f *fakeLDAPConnection) SetTimeout(timeout time.Duration) { f.timeout = timeout }
+func (f *fakeLDAPConnection) Close() error {
+	f.closed = true
+	return nil
+}
+
+func testAuthenticator(cfg config.Config, conn *fakeLDAPConnection) *Authenticator {
+	return &Authenticator{
+		config: cfg,
+		dialOverride: func(context.Context) (ldapConnection, func(), error) {
+			return conn, func() {}, nil
+		},
+	}
+}
 
 func TestGroupsAllowed(t *testing.T) {
 	actual := []string{
@@ -29,6 +70,14 @@ func TestGroupsAllowed(t *testing.T) {
 	}
 }
 
+func TestGroupsAllowedUsesLDAPDNEquality(t *testing.T) {
+	actual := []string{"CN=Admins+UID=42,OU=Groups,DC=example,DC=com"}
+	required := []string{"uid=42+cn=admins,ou=groups,dc=example,dc=com"}
+	if !groupsAllowed(actual, required, "any") {
+		t.Fatal("expected equivalent multi-valued LDAP DNs to match")
+	}
+}
+
 func TestRoleForGroups(t *testing.T) {
 	cfg := config.Default()
 	cfg.RoleSyncEnabled = true
@@ -44,6 +93,101 @@ func TestRoleForGroups(t *testing.T) {
 	cfg.RoleSyncEnabled = false
 	if role := roleForGroups([]string{"cn=siloadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
 		t.Fatalf("disabled role sync returned %q, want empty", role)
+	}
+}
+
+func TestAuthenticateBindsBeforeGroupDenial(t *testing.T) {
+	cfg := config.Default()
+	cfg.BaseDN = "dc=example,dc=com"
+	cfg.RequiredGroups = []string{"cn=allowed,ou=groups,dc=example,dc=com"}
+	entry := &ldap.Entry{
+		DN: "cn=alice,dc=example,dc=com",
+		Attributes: []*ldap.EntryAttribute{
+			{Name: "entryUUID", Values: []string{"alice-id"}},
+			{Name: "memberOf", Values: []string{"cn=other,ou=groups,dc=example,dc=com"}},
+		},
+	}
+	conn := &fakeLDAPConnection{entries: []*ldap.Entry{entry}}
+	auth := testAuthenticator(cfg, conn)
+
+	_, err := auth.Authenticate(context.Background(), "alice", "correct-password")
+	if !errors.Is(err, ErrGroupDenied) {
+		t.Fatalf("Authenticate error = %v, want ErrGroupDenied", err)
+	}
+	want := []string{"search", "bind:" + entry.DN}
+	if len(conn.operations) != len(want) {
+		t.Fatalf("operations = %v, want %v", conn.operations, want)
+	}
+	for i := range want {
+		if conn.operations[i] != want[i] {
+			t.Fatalf("operations = %v, want %v", conn.operations, want)
+		}
+	}
+}
+
+func TestAuthenticateUnknownUserConsumesDummyBind(t *testing.T) {
+	cfg := config.Default()
+	cfg.BaseDN = "dc=example,dc=com"
+	dummyDN := dummyBindDN(cfg.BaseDN, "missing")
+	conn := &fakeLDAPConnection{
+		bindErrors: map[string]error{
+			dummyDN: ldap.NewError(ldap.LDAPResultNoSuchObject, errors.New("not found")),
+		},
+	}
+	auth := testAuthenticator(cfg, conn)
+
+	_, err := auth.Authenticate(context.Background(), "missing", "wrong-password")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Authenticate error = %v, want ErrInvalidCredentials", err)
+	}
+	want := []string{"search", "bind:" + dummyDN}
+	if len(conn.operations) != len(want) {
+		t.Fatalf("operations = %v, want %v", conn.operations, want)
+	}
+	for i := range want {
+		if conn.operations[i] != want[i] {
+			t.Fatalf("operations = %v, want %v", conn.operations, want)
+		}
+	}
+}
+
+func TestAuthenticateWrongPasswordUsesRealBind(t *testing.T) {
+	cfg := config.Default()
+	cfg.BaseDN = "dc=example,dc=com"
+	entry := &ldap.Entry{
+		DN: "cn=alice,dc=example,dc=com",
+		Attributes: []*ldap.EntryAttribute{{Name: "entryUUID", Values: []string{"alice-id"}}},
+	}
+	conn := &fakeLDAPConnection{
+		entries: []*ldap.Entry{entry},
+		bindErrors: map[string]error{
+			entry.DN: ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("invalid credentials")),
+		},
+	}
+	auth := testAuthenticator(cfg, conn)
+
+	_, err := auth.Authenticate(context.Background(), "alice", "wrong-password")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Authenticate error = %v, want ErrInvalidCredentials", err)
+	}
+	want := []string{"search", "bind:" + entry.DN}
+	if len(conn.operations) != len(want) {
+		t.Fatalf("operations = %v, want %v", conn.operations, want)
+	}
+}
+
+func TestCloseLDAPOnContextClosesConnection(t *testing.T) {
+	conn := &fakeLDAPConnection{}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := closeLDAPOnContext(ctx, conn)
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for !conn.closed && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	stop()
+	if !conn.closed {
+		t.Fatal("context cancellation did not close LDAP connection")
 	}
 }
 
