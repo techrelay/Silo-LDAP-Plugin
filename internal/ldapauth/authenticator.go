@@ -515,9 +515,45 @@ func groupValuesEqual(left, right string) bool {
 	leftDN, leftErr := ldap.ParseDN(left)
 	rightDN, rightErr := ldap.ParseDN(right)
 	if leftErr == nil && rightErr == nil {
-		return leftDN.Equal(rightDN)
+		return ldapDNEqualFold(leftDN, rightDN)
 	}
 	return strings.EqualFold(left, right)
+}
+
+func ldapDNEqualFold(left, right *ldap.DN) bool {
+	if left == nil || right == nil || len(left.RDNs) != len(right.RDNs) {
+		return false
+	}
+	for i := range left.RDNs {
+		if !ldapRelativeDNEqualFold(left.RDNs[i], right.RDNs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func ldapRelativeDNEqualFold(left, right *ldap.RelativeDN) bool {
+	if left == nil || right == nil || len(left.Attributes) != len(right.Attributes) {
+		return false
+	}
+	matched := make([]bool, len(right.Attributes))
+	for _, leftAttr := range left.Attributes {
+		found := false
+		for i, rightAttr := range right.Attributes {
+			if matched[i] {
+				continue
+			}
+			if strings.EqualFold(leftAttr.Type, rightAttr.Type) && strings.EqualFold(leftAttr.Value, rightAttr.Value) {
+				matched[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func uniqueNonEmpty(values ...string) []string {
