@@ -59,6 +59,48 @@ func TestDecodeValidLDAPSConfig(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsWrongBooleanType(t *testing.T) {
+	value, err := structpb.NewStruct(map[string]any{
+		"url":               "ldaps://ldap.example.com:636",
+		"base_dn":           "dc=example,dc=com",
+		"role_sync_enabled": "true",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Decode([]*pluginv1.ConfigEntry{{Key: EntryKey, Value: value}}); err == nil {
+		t.Fatal("expected string boolean to be rejected")
+	}
+}
+
+func TestDecodeRejectsFractionalTimeout(t *testing.T) {
+	value, err := structpb.NewStruct(map[string]any{
+		"url":             "ldaps://ldap.example.com:636",
+		"base_dn":         "dc=example,dc=com",
+		"timeout_seconds": 9.5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Decode([]*pluginv1.ConfigEntry{{Key: EntryKey, Value: value}}); err == nil {
+		t.Fatal("expected fractional timeout to be rejected")
+	}
+}
+
+func TestDecodeRejectsUnknownField(t *testing.T) {
+	value, err := structpb.NewStruct(map[string]any{
+		"url":        "ldaps://ldap.example.com:636",
+		"base_dn":    "dc=example,dc=com",
+		"unexpected": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Decode([]*pluginv1.ConfigEntry{{Key: EntryKey, Value: value}}); err == nil {
+		t.Fatal("expected unknown field to be rejected")
+	}
+}
+
 func TestValidateRejectsPlaintextByDefault(t *testing.T) {
 	cfg := Default()
 	cfg.URL = "ldap://ldap.example.com:389"
