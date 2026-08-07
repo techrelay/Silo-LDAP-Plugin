@@ -23,6 +23,7 @@ import (
 const (
 	connectionTestMetadataKey = "connection_test"
 	siloRoleClaimKey          = "silo_role"
+	siloRoleManagedClaimKey   = "silo_role_managed"
 )
 
 var version string
@@ -108,6 +109,7 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 	}
 	if user.Role != "" {
 		claimValues[siloRoleClaimKey] = user.Role
+		claimValues[siloRoleManagedClaimKey] = true
 	}
 	claims, err := structpb.NewStruct(claimValues)
 	if err != nil {
