@@ -4,15 +4,14 @@ An LDAP authentication provider plugin for [Silo Media Server](https://github.co
 
 The plugin implements Silo's `auth_provider.v1` password flow and supports:
 
-- Synology LDAP Server and other OpenLDAP-compatible directories
-- Synology Directory Server and Microsoft Active Directory
+- OpenLDAP-compatible directories, Synology LDAP Server, and Active Directory
 - LDAPS and StartTLS
 - Read-only service-account searches or anonymous searches
 - Stable Silo identities through `entryUUID`, `objectGUID`, or another configured attribute
 - Optional direct LDAP group allowlisting
 - Optional LDAP administrator-group to Silo-role synchronization
 - Configuration connection testing
-- Linux AMD64 and ARM64 builds for common Docker and Synology deployments
+- Linux AMD64 and ARM64 builds
 
 ## Authentication flow
 
@@ -22,17 +21,17 @@ The plugin implements Silo's `auth_provider.v1` password flow and supports:
 4. It checks optional direct group membership from the configured group attribute.
 5. It binds as the discovered user DN with the submitted password.
 6. It returns a stable external subject, display name, email address, DN, groups, and an optional Silo role claim.
-7. Silo creates the session, optionally provisions the account, and synchronizes an advertised role.
+7. Silo creates the session, optionally provisions the account, and—when host support and role synchronization are both enabled—applies the advertised role.
 
 The plugin never stores user passwords and does not log credentials.
 
 ## Recommended directory settings
 
-### Synology LDAP Server / OpenLDAP
+### OpenLDAP-compatible directories
 
 | Setting | Example |
 | --- | --- |
-| LDAP URL | `ldaps://nas.example.com:636` |
+| LDAP URL | `ldaps://ldap.example.com:636` |
 | Base DN | `dc=example,dc=com` |
 | User filter | `(&(objectClass=person)(uid={username}))` |
 | Subject attribute | `entryUUID` |
@@ -40,7 +39,7 @@ The plugin never stores user passwords and does not log credentials.
 | Email attribute | `mail` |
 | Group attribute | `memberOf` |
 
-### Active Directory / Synology Directory Server
+### Active Directory
 
 | Setting | Example |
 | --- | --- |
@@ -54,46 +53,66 @@ The plugin never stores user passwords and does not log credentials.
 
 `{username}` is escaped with LDAP filter escaping before the search is performed.
 
-## Active Directory group and role mapping
+## Group access and role mapping
 
-For the `nbennett.xyz` directory, use:
+A typical deployment uses separate directory groups for sign-in access and Silo administrators:
 
-| Purpose | Group DN |
+| Purpose | Example group DN |
 | --- | --- |
-| Allowed normal users | `CN=JellyfinUsers,OU=groups,DC=nbennett,DC=xyz` |
-| Silo administrators | `CN=JellyfinAdmins,OU=groups,DC=nbennett,DC=xyz` |
+| Allowed users | `CN=SiloUsers,OU=Groups,DC=example,DC=com` |
+| Silo administrators | `CN=SiloAdmins,OU=Groups,DC=example,DC=com` |
 
-Configure the user group under **Sign-in group DNs**, enable **Synchronize Silo roles from LDAP**, and place the administrator group under **Administrator group DNs**.
+Configure the allowed-user group under **Sign-in group DNs**, enable **Synchronize Silo roles from LDAP**, and configure the administrator group under **Administrator group DNs**.
 
 When role synchronization is enabled:
 
-- a member of the configured administrator group receives the Silo `admin` role;
-- any other LDAP user who passes the sign-in allowlist receives the Silo `user` role;
-- promotions and demotions are applied on the next successful LDAP login;
-- removing a user from the administrator group demotes that account back to normal user permissions.
+- a member of the configured administrator group receives the `admin` role claim;
+- any other LDAP user who passes the sign-in allowlist receives the `user` role claim;
+- promotions and demotions are evaluated on each successful login;
+- administrators must also satisfy the sign-in allowlist.
 
-Administrator accounts must still satisfy the sign-in allowlist. Add administrators to both groups, nest the administrator group inside the user group where your directory exposes the membership as required, or include both group DNs in the sign-in allowlist with **Any configured group** selected.
+The capability manifest advertises the role contract explicitly:
 
-## Security defaults
+```json
+{
+  "role_claim": "silo_role",
+  "role_values": ["user", "admin"]
+}
+```
+
+Host support for that claim is required. Keep a working local Silo administrator account for recovery before enabling synchronization.
+
+## Security behavior
 
 - Plain `ldap://` connections are rejected unless StartTLS is enabled.
-- Plaintext LDAP can only be enabled through an explicit dangerous setting.
+- Plaintext LDAP requires an explicit dangerous override.
 - TLS 1.2 or later is required.
 - Certificate verification is enabled by default.
 - A private CA certificate can be supplied in PEM format.
 - User searches are limited to two results and authentication fails unless exactly one entry matches.
-- Missing users, wrong passwords, and denied groups produce the same login result.
-- Only `user` and `admin` are accepted from the reserved `silo_role` claim.
+- Missing users, incorrect passwords, and denied groups produce the same login result.
+- Full LDAP failures are written to plugin logs, while unauthenticated RPC responses expose only a stable operation stage.
+- Configuration values with incorrect or unknown types are rejected instead of silently falling back to defaults.
 
-Keep a working local Silo administrator account for recovery.
-
-## Build
+## Verification
 
 Go 1.26 or newer is required because the current Silo plugin SDK requires it.
 
 ```bash
+go mod tidy
+git diff --exit-code -- go.mod go.sum
+go mod verify
 go test ./...
-make build VERSION=0.3.0
+go vet ./...
+CGO_ENABLED=0 go build -trimpath -o /tmp/silo-plugin-auth-ldap .
+```
+
+The repository CI runs those checks for every pull request.
+
+## Build
+
+```bash
+make build VERSION=0.4.0
 ```
 
 The resulting binary is written to `dist/silo-plugin-auth-ldap`.
@@ -111,9 +130,10 @@ The workflow also generates platform-specific manifests with the binary checksum
 ## Current limitations
 
 - Group checks use direct values on the configured user attribute, normally `memberOf`.
-- Nested Active Directory group resolution is not yet implemented.
-- LDAP groups do not yet map to individual Silo libraries or granular permissions.
-- Password changes, account linking, and full LDAP directory synchronization are outside the password-provider contract.
+- Nested Active Directory group resolution is not implemented.
+- LDAP groups do not map to individual Silo libraries or granular permissions.
+- Password changes, account linking, and full directory synchronization are outside the password-provider contract.
+- Automated tests cover configuration, claim construction, failure handling, filter escaping, role mapping, and stable identities. Live-directory interoperability still requires deployment testing against the target LDAP implementation.
 
 ## License
 
