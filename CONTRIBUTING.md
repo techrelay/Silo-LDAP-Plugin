@@ -20,8 +20,8 @@ make vet         # go vet ./...
 ```
 
 You can't test against a real LDAP directory without one, but the unit tests cover the
-authenticator logic, config validation, failure-stage classification, and filter escaping. At
-minimum, all tests must pass.
+authenticator logic, config validation, typed failure-stage classification, RPC redaction, and
+filter escaping. At minimum, all tests must pass.
 
 ## AI Disclosure (Required)
 
