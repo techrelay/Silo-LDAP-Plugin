@@ -8,8 +8,8 @@ configuration block.
 ## Priorities
 
 Security first. Every code path must produce the same observable result for missing users, wrong
-passwords, and denied groups — no timing or error-message distinctions that leak directory
-topology. Credentials are never logged. Plaintext LDAP is rejected by default and requires an
+passwords, and denied groups — including avoiding practical timing distinctions that leak directory
+membership. Credentials are never logged. Plaintext LDAP is rejected by default and requires an
 explicit dangerous opt-in.
 
 ## Building and verifying
@@ -17,7 +17,7 @@ explicit dangerous opt-in.
 ```bash
 make test        # go test ./...
 make vet         # go vet ./...
-make build VERSION=0.3.1
+make build VERSION=0.4.0
 ```
 
 Go 1.26 or newer is required (the current Silo plugin SDK requires it).
@@ -30,23 +30,29 @@ CI runs on every push to `main` and `agent/**` branches, and on pull requests. I
 ```
 main.go                  → gRPC server, manifest, Configure/Authenticate handlers
 internal/
-  config/config.go       → Config struct, Decode from pluginpb.ConfigEntry, Validate
+  config/config.go       → Config struct, strict Decode from pluginpb.ConfigEntry, Validate
   ldapauth/
     authenticator.go     → Authenticator: dial, bind, search, authenticate, CheckConnection
+    errors.go            → typed failure stages and safe stage classification
 ```
 
-The `authServer` in `main.go` wraps an `ldapauth.Authenticator` behind a `sync.RWMutex` —
-`Configure` swaps the authenticator atomically, and `Authenticate` reads it under the read lock so
-reconfigures never race with in-flight logins.
+The `authServer` in `main.go` wraps the authenticator behind a `sync.RWMutex` — `Configure` swaps
+it atomically, and `Authenticate` reads it under the read lock so reconfigures never race with
+in-flight logins. The interface boundary is intentionally injectable for RPC behavior tests.
 
 ## Error classification
 
-The `Authenticate` handler in `main.go` maps `ldapauth` errors to gRPC status codes. Invalid
-credentials and group denials return an empty response (no gRPC error) so Silo treats them as
-ordinary failed logins. Infrastructure errors (connection refused, search failure, timeout) return
-`Unavailable` with a classified failure stage for diagnostics. `ldapAuthenticationFailureStage`
-classifies errors by their wrapped message prefix — keep that mapping in sync when adding new
-error paths in the authenticator.
+LDAP infrastructure failures are wrapped in `ldapauth.StageError`. `StageOf` returns a stable,
+non-sensitive stage for client responses while the full underlying error is retained for server
+logs. Do not return raw directory, TLS, hostname, DN, or search errors to unauthenticated clients.
+Invalid credentials and group denials return an empty authentication response so Silo treats them
+as ordinary failed logins.
+
+## Managed roles
+
+When role synchronization is enabled, the plugin returns both `silo_role_managed=true` and a
+`silo_role` value of `user` or `admin`. The capability manifest advertises the claim names and
+allowed values. Do not emit managed-role claims when synchronization is disabled.
 
 ## Stable subjects
 
