@@ -38,8 +38,26 @@ type ldapConnection interface {
 	Bind(username, password string) error
 	Search(searchRequest *ldap.SearchRequest) (*ldap.SearchResult, error)
 	SetTimeout(timeout time.Duration)
+	SetDeadline(deadline time.Time) error
 	Close() error
 }
+
+type networkLDAPConnection struct {
+	ldap   *ldap.Conn
+	socket net.Conn
+}
+
+func (c *networkLDAPConnection) Bind(username, password string) error {
+	return c.ldap.Bind(username, password)
+}
+func (c *networkLDAPConnection) Search(request *ldap.SearchRequest) (*ldap.SearchResult, error) {
+	return c.ldap.Search(request)
+}
+func (c *networkLDAPConnection) SetTimeout(timeout time.Duration) { c.ldap.SetTimeout(timeout) }
+func (c *networkLDAPConnection) SetDeadline(deadline time.Time) error {
+	return c.socket.SetDeadline(deadline)
+}
+func (c *networkLDAPConnection) Close() error { return c.ldap.Close() }
 
 type ldapDialer func(context.Context) (ldapConnection, func(), error)
 
@@ -118,16 +136,11 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 	entry, err := a.findUser(ctx, conn, username)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
-			// Preserve a bind-sized directory operation for an unknown or
-			// ambiguous user so failed-login timing does not reveal whether a
-			// directory entry exists.
 			return nil, a.maskUnknownUser(ctx, conn, username, password)
 		}
 		return nil, err
 	}
 
-	// Verify the password before applying group authorization. This keeps a
-	// wrong password from becoming an oracle for sign-in-group membership.
 	if err := a.prepareOperation(ctx, conn); err != nil {
 		return nil, err
 	}
@@ -166,11 +179,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 	}, nil
 }
 
-func (a *Authenticator) maskUnknownUser(
-	ctx context.Context,
-	conn ldapConnection,
-	username, password string,
-) error {
+func (a *Authenticator) maskUnknownUser(ctx context.Context, conn ldapConnection, username, password string) error {
 	if err := a.prepareOperation(ctx, conn); err != nil {
 		return err
 	}
@@ -209,15 +218,10 @@ func isExpectedDummyBindRejection(err error) bool {
 		ldap.LDAPResultConnectError:
 		return false
 	default:
-		// Invalid credentials, no-such-object, insufficient-access, and
-		// other directory-level rejections all represent the same external
-		// authentication outcome on the deliberate dummy bind path.
 		return true
 	}
 }
 
-// connectAndBind dials the LDAP directory, upgrades to TLS when configured,
-// and optionally authenticates with the search account.
 func (a *Authenticator) connectAndBind(ctx context.Context) (ldapConnection, func(), error) {
 	conn, stop, err := a.openConnection(ctx)
 	if err != nil {
@@ -272,30 +276,55 @@ func roleForGroups(groups []string, cfg config.Config) string {
 }
 
 func (a *Authenticator) dial(ctx context.Context) (ldapConnection, func(), error) {
-	timeout := effectiveTimeout(ctx, a.config.Timeout())
+	parsed, err := url.Parse(a.config.URL)
+	if err != nil {
+		return nil, nil, err
+	}
+	port := parsed.Port()
+	if port == "" {
+		if parsed.Scheme == "ldaps" {
+			port = "636"
+		} else {
+			port = "389"
+		}
+	}
+	address := net.JoinHostPort(parsed.Hostname(), port)
+
+	rawConn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := setSocketDeadline(ctx, rawConn); err != nil {
+		_ = rawConn.Close()
+		return nil, nil, err
+	}
+
 	tlsConfig, err := a.tlsConfig()
 	if err != nil {
+		_ = rawConn.Close()
 		return nil, nil, err
 	}
 
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := ldap.DialURL(
-		a.config.URL,
-		ldap.DialWithDialer(dialer),
-		ldap.DialWithTLSConfig(tlsConfig),
-	)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, nil, ctxErr
+	var socket net.Conn = rawConn
+	isTLS := false
+	if parsed.Scheme == "ldaps" {
+		tlsConn := tls.Client(rawConn, tlsConfig)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = rawConn.Close()
+			return nil, nil, operationError(ctx, StageConnection, err)
 		}
-		return nil, nil, err
+		socket = tlsConn
+		isTLS = true
 	}
-	conn.SetTimeout(timeout)
+
+	ldapConn := ldap.NewConn(socket, isTLS)
+	ldapConn.Start()
+	conn := &networkLDAPConnection{ldap: ldapConn, socket: socket}
+	conn.SetTimeout(effectiveTimeout(ctx, a.config.Timeout()))
 	stop := closeLDAPOnContext(ctx, conn)
 
-	parsed, _ := url.Parse(a.config.URL)
-	if parsed != nil && parsed.Scheme == "ldap" && a.config.StartTLS {
-		if err := conn.StartTLS(tlsConfig); err != nil {
+	if parsed.Scheme == "ldap" && a.config.StartTLS {
+		if err := ldapConn.StartTLS(tlsConfig); err != nil {
 			stop()
 			_ = conn.Close()
 			return nil, nil, operationError(ctx, StageStartTLS, err)
@@ -313,6 +342,7 @@ func closeLDAPOnContext(ctx context.Context, conn ldapConnection) func() {
 	go func() {
 		select {
 		case <-ctx.Done():
+			_ = conn.SetDeadline(time.Now())
 			_ = conn.Close()
 		case <-done:
 		}
@@ -329,7 +359,23 @@ func (a *Authenticator) prepareOperation(ctx context.Context, conn ldapConnectio
 		return err
 	}
 	conn.SetTimeout(effectiveTimeout(ctx, a.config.Timeout()))
-	return nil
+	return setConnectionDeadline(ctx, conn)
+}
+
+func setConnectionDeadline(ctx context.Context, conn ldapConnection) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
+	}
+	return conn.SetDeadline(deadline)
+}
+
+func setSocketDeadline(ctx context.Context, conn net.Conn) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
+	}
+	return conn.SetDeadline(deadline)
 }
 
 func operationError(ctx context.Context, stage FailureStage, err error) error {
@@ -395,10 +441,6 @@ func (a *Authenticator) findUser(ctx context.Context, conn ldapConnection, usern
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		// The client-side size limit is two entries. SizeLimitExceeded
-		// therefore proves the configured filter is ambiguous rather than
-		// indicating an infrastructure outage, so keep the external result
-		// indistinguishable from any other non-unique user lookup.
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
 			return nil, ErrInvalidCredentials
 		}
@@ -475,9 +517,6 @@ func groupValuesEqual(left, right string) bool {
 	if leftErr == nil && rightErr == nil {
 		return leftDN.Equal(rightDN)
 	}
-	// Preserve support for directories configured with a non-DN group
-	// attribute while using RFC distinguishedNameMatch whenever both values
-	// are valid DNs.
 	return strings.EqualFold(left, right)
 }
 
