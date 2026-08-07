@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
-	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
+	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
 )
 
 var (
@@ -52,18 +52,18 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 
 	filter, err := buildUserFilter(a.config.UserFilter, "__silo_connection_test__")
 	if err != nil {
-		return fmt.Errorf("validate LDAP user filter: %w", err)
+		return withStage(StageUserFilter, err)
 	}
 
 	conn, err := a.dial(ctx)
 	if err != nil {
-		return fmt.Errorf("connect to LDAP: %w", err)
+		return withStage(StageConnection, err)
 	}
 	defer conn.Close()
 
 	if a.config.BindDN != "" {
 		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
-			return fmt.Errorf("bind LDAP search account: %w", err)
+			return withStage(StageSearchAccountBind, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -82,7 +82,7 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 		nil,
 	)
 	if _, err := conn.Search(request); err != nil {
-		return fmt.Errorf("query LDAP user search base: %w", err)
+		return withStage(StageUserSearch, err)
 	}
 	if err := a.checkConfiguredGroupDNs(conn); err != nil {
 		return err
@@ -107,10 +107,10 @@ func (a *Authenticator) checkConfiguredGroupDNs(conn *ldap.Conn) error {
 		)
 		result, err := conn.Search(request)
 		if err != nil {
-			return fmt.Errorf("query configured LDAP group %q: %w", groupDN, err)
+			return withStage(StageGroupValidation, err)
 		}
 		if len(result.Entries) != 1 {
-			return fmt.Errorf("configured LDAP group %q was not found", groupDN)
+			return withStage(StageGroupValidation, fmt.Errorf("configured LDAP group was not found"))
 		}
 	}
 	return nil
@@ -127,13 +127,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 
 	conn, err := a.dial(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("connect to LDAP: %w", err)
+		return nil, withStage(StageConnection, err)
 	}
 	defer conn.Close()
 
 	if a.config.BindDN != "" {
 		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
-			return nil, fmt.Errorf("bind LDAP search account: %w", err)
+			return nil, withStage(StageSearchAccountBind, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -153,12 +153,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 			return nil, ErrInvalidCredentials
 		}
-		return nil, fmt.Errorf("bind LDAP user: %w", err)
+		return nil, withStage(StageUserBind, err)
 	}
 
 	subject, err := stableSubject(entry, a.config.SubjectAttribute)
 	if err != nil {
-		return nil, err
+		return nil, withStage(StageSubjectMapping, err)
 	}
 	displayName := strings.TrimSpace(entry.GetEqualFoldAttributeValue(a.config.DisplayNameAttribute))
 	if displayName == "" {
@@ -243,7 +243,7 @@ func (a *Authenticator) tlsConfig() (*tls.Config, error) {
 func (a *Authenticator) findUser(conn *ldap.Conn, username string) (*ldap.Entry, error) {
 	filter, err := buildUserFilter(a.config.UserFilter, username)
 	if err != nil {
-		return nil, fmt.Errorf("compile LDAP user filter: %w", err)
+		return nil, withStage(StageUserFilter, err)
 	}
 	attributes := uniqueNonEmpty(
 		a.config.SubjectAttribute,
@@ -264,7 +264,7 @@ func (a *Authenticator) findUser(conn *ldap.Conn, username string) (*ldap.Entry,
 	)
 	result, err := conn.Search(request)
 	if err != nil {
-		return nil, fmt.Errorf("search LDAP user: %w", err)
+		return nil, withStage(StageUserSearch, err)
 	}
 	if len(result.Entries) != 1 {
 		return nil, ErrInvalidCredentials
