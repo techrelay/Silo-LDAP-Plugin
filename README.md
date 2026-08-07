@@ -20,7 +20,7 @@ The plugin implements Silo's `auth_provider.v1` password flow and supports:
 3. It searches for exactly one user with the configured filter.
 4. It checks optional direct group membership from the configured group attribute.
 5. It binds as the discovered user DN with the submitted password.
-6. It returns a stable external subject, display name, email address, DN, groups, and an optional Silo role claim.
+6. It returns a stable external subject, display name, email address, DN, groups, and optional managed-role claims.
 7. Silo creates the session, optionally provisions the account, and—when host support and role synchronization are both enabled—applies the advertised role.
 
 The plugin never stores user passwords and does not log credentials.
@@ -75,12 +75,13 @@ The capability manifest advertises the role contract explicitly:
 
 ```json
 {
+  "role_managed_claim": "silo_role_managed",
   "role_claim": "silo_role",
   "role_values": ["user", "admin"]
 }
 ```
 
-Host support for that claim is required. Keep a working local Silo administrator account for recovery before enabling synchronization.
+A successful login with role synchronization enabled returns both `silo_role_managed=true` and the selected `silo_role`. Host support for both claims is required. Keep a working local Silo administrator account for recovery before enabling synchronization.
 
 ## Security behavior
 
@@ -107,7 +108,7 @@ go vet ./...
 CGO_ENABLED=0 go build -trimpath -o /tmp/silo-plugin-auth-ldap .
 ```
 
-The repository CI runs those checks for every pull request.
+The repository CI is configured to run those checks for every pull request.
 
 ## Build
 
