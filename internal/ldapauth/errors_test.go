@@ -15,6 +15,7 @@ func TestStageOf(t *testing.T) {
 	}{
 		{name: "typed", err: &StageError{Stage: StageUserSearch, Err: errors.New("operations error")}, want: StageUserSearch},
 		{name: "wrapped typed", err: fmt.Errorf("authenticate: %w", &StageError{Stage: StageUserBind, Err: errors.New("unavailable")}), want: StageUserBind},
+		{name: "start tls", err: &StageError{Stage: StageStartTLS, Err: errors.New("handshake failed")}, want: StageStartTLS},
 		{name: "deadline", err: &StageError{Stage: StageConnection, Err: context.DeadlineExceeded}, want: StageTimeout},
 		{name: "canceled", err: fmt.Errorf("wrapped: %w", context.Canceled), want: StageRequest},
 		{name: "unknown", err: errors.New("unexpected directory error"), want: StageDirectory},
