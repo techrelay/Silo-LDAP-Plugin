@@ -119,7 +119,7 @@ func TestInvalidCredentialsRemainIndistinguishable(t *testing.T) {
 	}
 }
 
-func TestRoleClaimIsReturnedOnlyWhenConfigured(t *testing.T) {
+func TestRoleClaimIsMarkedAsManaged(t *testing.T) {
 	server := &authServer{}
 	server.SetAuthenticator(stubLDAPAuthenticator{user: &ldapauth.User{
 		Subject:     "objectguid:0102",
@@ -135,7 +135,11 @@ func TestRoleClaimIsReturnedOnlyWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate returned error: %v", err)
 	}
-	if got := response.GetClaims().AsMap()[siloRoleClaimKey]; got != "admin" {
+	claims := response.GetClaims().AsMap()
+	if got := claims[siloRoleClaimKey]; got != "admin" {
 		t.Fatalf("role claim = %#v, want admin", got)
+	}
+	if got := claims[siloRoleManagedClaimKey]; got != true {
+		t.Fatalf("managed role marker = %#v, want true", got)
 	}
 }
