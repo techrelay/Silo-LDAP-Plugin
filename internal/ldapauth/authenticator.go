@@ -17,10 +17,62 @@ import (
 	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
 )
 
+// Sentinel errors for authentication outcomes.
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrGroupDenied        = errors.New("user is not a member of an allowed LDAP group")
 )
+
+// Sentinel errors for failure-stage classification. Each sentinel
+// identifies one stage in the LDAP authentication or connection-test
+// pipeline.
+var (
+	ErrStageConnection        = errors.New("ldap connection")
+	ErrStageStartTLS          = errors.New("ldap start TLS")
+	ErrStageSearchBind        = errors.New("ldap search account bind")
+	ErrStageUserFilter        = errors.New("ldap user filter compile")
+	ErrStageUserSearch        = errors.New("ldap user search")
+	ErrStageUserBind          = errors.New("ldap user bind")
+	ErrStageSubjectMapping    = errors.New("ldap subject attribute mapping")
+	ErrStageFilterValidate    = errors.New("ldap filter validation")
+	ErrStageSearchBaseQuery   = errors.New("ldap search base query")
+	ErrStageGroupQuery        = errors.New("ldap group query")
+	ErrStageGroupNotFound     = errors.New("ldap group not found")
+)
+
+// AuthenticationFailureStage maps an error to a short diagnostic label by
+// checking it against the sentinel stage errors.
+func AuthenticationFailureStage(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "request"
+	}
+	switch {
+	case errors.Is(err, ErrStageConnection):
+		return "connection"
+	case errors.Is(err, ErrStageStartTLS):
+		return "start-tls"
+	case errors.Is(err, ErrStageSearchBind):
+		return "search-account bind"
+	case errors.Is(err, ErrStageUserFilter), errors.Is(err, ErrStageFilterValidate):
+		return "user-filter compilation"
+	case errors.Is(err, ErrStageUserSearch), errors.Is(err, ErrStageSearchBaseQuery):
+		return "user search"
+	case errors.Is(err, ErrStageUserBind):
+		return "user bind"
+	case errors.Is(err, ErrStageSubjectMapping):
+		return "stable-subject mapping"
+	case errors.Is(err, ErrStageGroupQuery), errors.Is(err, ErrStageGroupNotFound):
+		return "group validation"
+	default:
+		return "directory processing"
+	}
+}
 
 type User struct {
 	Subject     string
@@ -52,23 +104,14 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 
 	filter, err := buildUserFilter(a.config.UserFilter, "__silo_connection_test__")
 	if err != nil {
-		return fmt.Errorf("validate LDAP user filter: %w", err)
+		return fmt.Errorf("%w: %w", ErrStageFilterValidate, err)
 	}
 
-	conn, err := a.dial(ctx)
+	conn, err := a.connectAndBind(ctx)
 	if err != nil {
-		return fmt.Errorf("connect to LDAP: %w", err)
-	}
-	defer conn.Close()
-
-	if a.config.BindDN != "" {
-		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
-			return fmt.Errorf("bind LDAP search account: %w", err)
-		}
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer conn.Close()
 
 	request := ldap.NewSearchRequest(
 		a.config.BaseDN,
@@ -82,7 +125,7 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 		nil,
 	)
 	if _, err := conn.Search(request); err != nil {
-		return fmt.Errorf("query LDAP user search base: %w", err)
+		return fmt.Errorf("%w: %w", ErrStageSearchBaseQuery, err)
 	}
 	if err := a.checkConfiguredGroupDNs(conn); err != nil {
 		return err
@@ -107,10 +150,10 @@ func (a *Authenticator) checkConfiguredGroupDNs(conn *ldap.Conn) error {
 		)
 		result, err := conn.Search(request)
 		if err != nil {
-			return fmt.Errorf("query configured LDAP group %q: %w", groupDN, err)
+			return fmt.Errorf("%w: %w", ErrStageGroupQuery, err)
 		}
 		if len(result.Entries) != 1 {
-			return fmt.Errorf("configured LDAP group %q was not found", groupDN)
+			return fmt.Errorf("%w: configured LDAP group %q was not found", ErrStageGroupNotFound, groupDN)
 		}
 	}
 	return nil
@@ -118,27 +161,21 @@ func (a *Authenticator) checkConfiguredGroupDNs(conn *ldap.Conn) error {
 
 func (a *Authenticator) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	username = strings.TrimSpace(username)
-	if username == "" || password == "" {
+	if username == "" {
+		return nil, ErrInvalidCredentials
+	}
+	if password == "" {
 		return nil, ErrInvalidCredentials
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	conn, err := a.dial(ctx)
+	conn, err := a.connectAndBind(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("connect to LDAP: %w", err)
-	}
-	defer conn.Close()
-
-	if a.config.BindDN != "" {
-		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
-			return nil, fmt.Errorf("bind LDAP search account: %w", err)
-		}
-	}
-	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	defer conn.Close()
 
 	entry, err := a.findUser(conn, username)
 	if err != nil {
@@ -153,7 +190,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 			return nil, ErrInvalidCredentials
 		}
-		return nil, fmt.Errorf("bind LDAP user: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrStageUserBind, err)
 	}
 
 	subject, err := stableSubject(entry, a.config.SubjectAttribute)
@@ -174,6 +211,26 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		Groups:      append([]string(nil), groups...),
 		Role:        roleForGroups(groups, a.config),
 	}, nil
+}
+
+// connectAndBind dials the LDAP directory, upgrades to TLS when configured,
+// and optionally authenticates with the search account.
+func (a *Authenticator) connectAndBind(ctx context.Context) (*ldap.Conn, error) {
+	conn, err := a.dial(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrStageConnection, err)
+	}
+	if a.config.BindDN != "" {
+		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("%w: %w", ErrStageSearchBind, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 func roleForGroups(groups []string, cfg config.Config) string {
@@ -208,7 +265,7 @@ func (a *Authenticator) dial(ctx context.Context) (*ldap.Conn, error) {
 	if parsed != nil && parsed.Scheme == "ldap" && a.config.StartTLS {
 		if err := conn.StartTLS(tlsConfig); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("start TLS: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrStageStartTLS, err)
 		}
 	}
 	return conn, nil
@@ -243,7 +300,7 @@ func (a *Authenticator) tlsConfig() (*tls.Config, error) {
 func (a *Authenticator) findUser(conn *ldap.Conn, username string) (*ldap.Entry, error) {
 	filter, err := buildUserFilter(a.config.UserFilter, username)
 	if err != nil {
-		return nil, fmt.Errorf("compile LDAP user filter: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrStageUserFilter, err)
 	}
 	attributes := uniqueNonEmpty(
 		a.config.SubjectAttribute,
@@ -264,7 +321,7 @@ func (a *Authenticator) findUser(conn *ldap.Conn, username string) (*ldap.Entry,
 	)
 	result, err := conn.Search(request)
 	if err != nil {
-		return nil, fmt.Errorf("search LDAP user: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrStageUserSearch, err)
 	}
 	if len(result.Entries) != 1 {
 		return nil, ErrInvalidCredentials
@@ -287,7 +344,7 @@ func stableSubject(entry *ldap.Entry, attribute string) (string, error) {
 
 	if strings.EqualFold(attribute, "objectGUID") || strings.EqualFold(attribute, "objectSid") {
 		if len(raw) == 0 {
-			return "", fmt.Errorf("LDAP subject attribute %q is missing", attribute)
+			return "", fmt.Errorf("%w: LDAP subject attribute %q is missing", ErrStageSubjectMapping, attribute)
 		}
 		return strings.ToLower(attribute) + ":" + hex.EncodeToString(raw), nil
 	}
@@ -297,7 +354,7 @@ func stableSubject(entry *ldap.Entry, attribute string) (string, error) {
 	if len(raw) > 0 {
 		return strings.ToLower(attribute) + ":" + hex.EncodeToString(raw), nil
 	}
-	return "", fmt.Errorf("LDAP subject attribute %q is missing", attribute)
+	return "", fmt.Errorf("%w: LDAP subject attribute %q is missing", ErrStageSubjectMapping, attribute)
 }
 
 func groupsAllowed(actual, required []string, mode string) bool {

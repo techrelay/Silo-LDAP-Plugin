@@ -1,8 +1,10 @@
 package ldapauth
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
@@ -56,6 +58,32 @@ func TestStableSubjectUsesBinaryObjectGUID(t *testing.T) {
 	}
 }
 
+func TestStableSubjectTextAttribute(t *testing.T) {
+	entry := &ldap.Entry{Attributes: []*ldap.EntryAttribute{
+		{Name: "entryUUID", Values: []string{"abc123-def456"}},
+	}}
+	subject, err := stableSubject(entry, "entryUUID")
+	if err != nil {
+		t.Fatalf("stableSubject returned an error: %v", err)
+	}
+	if subject != "entryuuid:abc123-def456" {
+		t.Fatalf("subject = %q, want entryuuid:abc123-def456", subject)
+	}
+}
+
+func TestStableSubjectRawFallback(t *testing.T) {
+	entry := &ldap.Entry{Attributes: []*ldap.EntryAttribute{
+		{Name: "customAttr", ByteValues: [][]byte{{0xde, 0xad}}},
+	}}
+	subject, err := stableSubject(entry, "customAttr")
+	if err != nil {
+		t.Fatalf("stableSubject returned an error: %v", err)
+	}
+	if subject != "customattr:dead" {
+		t.Fatalf("subject = %q, want customattr:dead", subject)
+	}
+}
+
 func TestBuildUserFilterEscapesUsername(t *testing.T) {
 	filter, err := buildUserFilter(
 		"(&(objectClass=user)(sAMAccountName={username}))",
@@ -77,5 +105,55 @@ func TestBuildUserFilterEscapesUsername(t *testing.T) {
 func TestBuildUserFilterRejectsInvalidTemplate(t *testing.T) {
 	if _, err := buildUserFilter("(&(objectClass=user)", "nick"); err == nil {
 		t.Fatal("expected malformed LDAP filter to be rejected")
+	}
+}
+
+func TestUniqueNonEmpty(t *testing.T) {
+	result := uniqueNonEmpty("cn=admins", "", "cn=users", "CN=Admins", "  cn=media  ")
+	if len(result) != 3 {
+		t.Fatalf("uniqueNonEmpty = %d items, want 3: %v", len(result), result)
+	}
+	expected := []string{"cn=admins", "cn=users", "cn=media"}
+	for i, want := range expected {
+		if result[i] != want {
+			t.Fatalf("uniqueNonEmpty[%d] = %q, want %q", i, result[i], want)
+		}
+	}
+}
+
+func TestEffectiveTimeout(t *testing.T) {
+	ctx := context.Background()
+	if got := effectiveTimeout(ctx, 5*time.Second); got != 5*time.Second {
+		t.Fatalf("effectiveTimeout without deadline = %v, want 5s", got)
+	}
+}
+
+func TestAuthenticationFailureStage(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil", err: nil, want: "unknown"},
+		{name: "connection", err: ErrStageConnection, want: "connection"},
+		{name: "start-tls", err: ErrStageStartTLS, want: "start-tls"},
+		{name: "search bind", err: ErrStageSearchBind, want: "search-account bind"},
+		{name: "user filter", err: ErrStageUserFilter, want: "user-filter compilation"},
+		{name: "filter validate", err: ErrStageFilterValidate, want: "user-filter compilation"},
+		{name: "user search", err: ErrStageUserSearch, want: "user search"},
+		{name: "search base", err: ErrStageSearchBaseQuery, want: "user search"},
+		{name: "user bind", err: ErrStageUserBind, want: "user bind"},
+		{name: "subject mapping", err: ErrStageSubjectMapping, want: "stable-subject mapping"},
+		{name: "group query", err: ErrStageGroupQuery, want: "group validation"},
+		{name: "group not found", err: ErrStageGroupNotFound, want: "group validation"},
+		{name: "unknown", err: ErrInvalidCredentials, want: "directory processing"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := AuthenticationFailureStage(test.err); got != test.want {
+				t.Fatalf("AuthenticationFailureStage(%v) = %q, want %q", test.err, got, test.want)
+			}
+		})
 	}
 }

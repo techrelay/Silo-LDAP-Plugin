@@ -184,8 +184,6 @@ func intValue(values map[string]any, key string, fallback int) int {
 	switch typed := value.(type) {
 	case float64:
 		return int(typed)
-	case float32:
-		return int(typed)
 	case int:
 		return typed
 	case int32:
