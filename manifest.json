@@ -33,7 +33,9 @@
         "connection_test_contract": "silo.auth.connection-test.v1",
         "connection_test_config_keys": ["ldap"],
         "connection_test_ack_claim": "silo_connection_test_ok",
+        "connection_test_response_contract_claim": "silo_connection_test_contract",
         "managed_role_contract": "silo.auth.managed-role.v1",
+        "role_contract_claim": "silo_role_contract",
         "role_managed_claim": "silo_role_managed",
         "role_claim": "silo_role",
         "role_values": ["user", "admin"]
