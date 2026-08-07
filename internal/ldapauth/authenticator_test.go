@@ -18,6 +18,7 @@ type fakeLDAPConnection struct {
 	bindErrors map[string]error
 	operations []string
 	timeout    time.Duration
+	deadline   time.Time
 	closed     atomic.Bool
 }
 
@@ -38,6 +39,10 @@ func (f *fakeLDAPConnection) Search(*ldap.SearchRequest) (*ldap.SearchResult, er
 }
 
 func (f *fakeLDAPConnection) SetTimeout(timeout time.Duration) { f.timeout = timeout }
+func (f *fakeLDAPConnection) SetDeadline(deadline time.Time) error {
+	f.deadline = deadline
+	return nil
+}
 func (f *fakeLDAPConnection) Close() error {
 	f.closed.Store(true)
 	return nil
@@ -199,7 +204,21 @@ func TestAuthenticateWrongPasswordUsesRealBind(t *testing.T) {
 	}
 }
 
-func TestCloseLDAPOnContextClosesConnection(t *testing.T) {
+func TestPrepareOperationAppliesContextDeadline(t *testing.T) {
+	cfg := config.Default()
+	conn := &fakeLDAPConnection{}
+	auth := testAuthenticator(cfg, conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := auth.prepareOperation(ctx, conn); err != nil {
+		t.Fatalf("prepareOperation returned error: %v", err)
+	}
+	if conn.deadline.IsZero() {
+		t.Fatal("prepareOperation did not apply a socket deadline")
+	}
+}
+
+func TestCloseLDAPOnContextForcesSocketDeadlineAndClose(t *testing.T) {
 	conn := &fakeLDAPConnection{}
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := closeLDAPOnContext(ctx, conn)
@@ -211,6 +230,9 @@ func TestCloseLDAPOnContextClosesConnection(t *testing.T) {
 	stop()
 	if !conn.closed.Load() {
 		t.Fatal("context cancellation did not close LDAP connection")
+	}
+	if conn.deadline.IsZero() {
+		t.Fatal("context cancellation did not force a socket deadline")
 	}
 }
 
