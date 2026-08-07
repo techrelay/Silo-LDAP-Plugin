@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strings"
@@ -72,9 +73,10 @@ func New(cfg config.Config) *Authenticator {
 
 // CheckConnection validates the configured transport, TLS negotiation,
 // search-account bind, base DN, and user-search filter without requiring a
-// real user's password. Group objects are deliberately not queried: normal
-// authentication only consumes group values from the user entry, so requiring
-// group-object read ACLs here would reject otherwise valid deployments.
+// real user's password. Configured group DNs are validated on a best-effort
+// basis: warnings are logged for unreachable groups, but the connection test
+// succeeds so deployments where group objects are not directly readable
+// (common with some LDAP servers) are not rejected.
 func (a *Authenticator) CheckConnection(ctx context.Context) error {
 	ctx, cancel := a.operationContext(ctx)
 	defer cancel()
@@ -111,7 +113,43 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 	if _, err := conn.Search(request); err != nil {
 		return operationError(ctx, StageUserSearch, err)
 	}
+	a.warnUnreachableGroupDNs(ctx, conn)
 	return nil
+}
+
+// warnUnreachableGroupDNs logs a warning for each configured group DN that
+// cannot be queried or resolved. Failures here are not fatal because many
+// LDAP deployments do not grant group-object read access to the search
+// account — the user entry's memberOf attribute is the canonical source.
+func (a *Authenticator) warnUnreachableGroupDNs(ctx context.Context, conn ldapConnection) {
+	groupDNs := append([]string(nil), a.config.RequiredGroups...)
+	groupDNs = append(groupDNs, a.config.AdminGroups...)
+	for _, groupDN := range uniqueNonEmpty(groupDNs...) {
+		request := ldap.NewSearchRequest(
+			groupDN,
+			ldap.ScopeBaseObject,
+			ldap.NeverDerefAliases,
+			1,
+			a.config.TimeoutSeconds,
+			false,
+			"(objectClass=*)",
+			[]string{"1.1"},
+			nil,
+		)
+		result, err := conn.Search(request)
+		if err != nil {
+			slog.WarnContext(ctx, "configured LDAP group query failed during connection test",
+				"group_dn", groupDN,
+				"error", err,
+			)
+			continue
+		}
+		if len(result.Entries) != 1 {
+			slog.WarnContext(ctx, "configured LDAP group was not found during connection test",
+				"group_dn", groupDN,
+			)
+		}
+	}
 }
 
 func (a *Authenticator) Authenticate(ctx context.Context, username, password string) (*User, error) {
