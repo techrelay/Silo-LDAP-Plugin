@@ -1,8 +1,10 @@
 package ldapauth
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
@@ -30,7 +32,7 @@ func TestGroupsAllowed(t *testing.T) {
 func TestRoleForGroups(t *testing.T) {
 	cfg := config.Default()
 	cfg.RoleSyncEnabled = true
-	cfg.AdminGroups = []string{"CN=SiloAdmins,OU=groups,DC=example,DC=com"}
+	cfg.AdminGroups = []string{"CN=SiloAdmins,OU=Groups,DC=example,DC=com"}
 
 	if role := roleForGroups([]string{"cn=siloadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
 		t.Fatalf("administrator role = %q, want admin", role)
@@ -56,6 +58,32 @@ func TestStableSubjectUsesBinaryObjectGUID(t *testing.T) {
 	}
 }
 
+func TestStableSubjectTextAttribute(t *testing.T) {
+	entry := &ldap.Entry{Attributes: []*ldap.EntryAttribute{
+		{Name: "entryUUID", Values: []string{"abc123-def456"}},
+	}}
+	subject, err := stableSubject(entry, "entryUUID")
+	if err != nil {
+		t.Fatalf("stableSubject returned an error: %v", err)
+	}
+	if subject != "entryuuid:abc123-def456" {
+		t.Fatalf("subject = %q, want entryuuid:abc123-def456", subject)
+	}
+}
+
+func TestStableSubjectRawFallback(t *testing.T) {
+	entry := &ldap.Entry{Attributes: []*ldap.EntryAttribute{
+		{Name: "customAttr", ByteValues: [][]byte{{0xde, 0xad}}},
+	}}
+	subject, err := stableSubject(entry, "customAttr")
+	if err != nil {
+		t.Fatalf("stableSubject returned an error: %v", err)
+	}
+	if subject != "customattr:dead" {
+		t.Fatalf("subject = %q, want customattr:dead", subject)
+	}
+}
+
 func TestBuildUserFilterEscapesUsername(t *testing.T) {
 	filter, err := buildUserFilter(
 		"(&(objectClass=user)(sAMAccountName={username}))",
@@ -77,5 +105,25 @@ func TestBuildUserFilterEscapesUsername(t *testing.T) {
 func TestBuildUserFilterRejectsInvalidTemplate(t *testing.T) {
 	if _, err := buildUserFilter("(&(objectClass=user)", "nick"); err == nil {
 		t.Fatal("expected malformed LDAP filter to be rejected")
+	}
+}
+
+func TestUniqueNonEmpty(t *testing.T) {
+	result := uniqueNonEmpty("cn=admins", "", "cn=users", "CN=Admins", "  cn=media  ")
+	if len(result) != 3 {
+		t.Fatalf("uniqueNonEmpty = %d items, want 3: %v", len(result), result)
+	}
+	expected := []string{"cn=admins", "cn=users", "cn=media"}
+	for i, want := range expected {
+		if result[i] != want {
+			t.Fatalf("uniqueNonEmpty[%d] = %q, want %q", i, result[i], want)
+		}
+	}
+}
+
+func TestEffectiveTimeout(t *testing.T) {
+	ctx := context.Background()
+	if got := effectiveTimeout(ctx, 5*time.Second); got != 5*time.Second {
+		t.Fatalf("effectiveTimeout without deadline = %v, want 5s", got)
 	}
 }
