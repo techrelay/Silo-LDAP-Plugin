@@ -52,6 +52,23 @@ func TestConnectionTestRequested(t *testing.T) {
 	}
 }
 
+func TestConnectionCheckReturnsExplicitAck(t *testing.T) {
+	metadata, err := structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &authServer{}
+	server.SetAuthenticator(stubLDAPAuthenticator{})
+
+	response, err := server.Authenticate(context.Background(), &pluginv1.AuthenticateRequest{Metadata: metadata})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+	if response.GetClaims().AsMap()[connectionTestAckClaimKey] != true {
+		t.Fatalf("connection-test response = %#v, want %s=true", response.GetClaims().AsMap(), connectionTestAckClaimKey)
+	}
+}
+
 func TestAuthenticationFailureDoesNotExposeLDAPDetails(t *testing.T) {
 	server := &authServer{}
 	server.SetAuthenticator(stubLDAPAuthenticator{
