@@ -72,7 +72,7 @@ When role synchronization is enabled:
 - promotions and demotions are evaluated on each successful login;
 - administrators must also satisfy the sign-in allowlist.
 
-When group values and configured values are valid LDAP distinguished names, they are compared using LDAP DN equality rather than raw lowercase string equality. This handles equivalent RFC 4514 representations such as reordered attributes in a multi-valued RDN. Non-DN custom group attributes fall back to case-insensitive string comparison.
+When group values and configured values are valid LDAP distinguished names, they are parsed and compared structurally. RDN ordering remains significant; attributes within a multi-valued RDN are matched by type and value rather than position; and attribute types and values are compared case-insensitively for practical directory group matching. Non-DN custom group attributes fall back to case-insensitive string comparison. This is not a complete implementation of every schema-specific LDAP matching rule.
 
 Nested Active Directory groups are not resolved. The plugin evaluates the direct values exposed by the configured user group attribute, normally `memberOf`.
 
@@ -88,13 +88,11 @@ The capability advertises:
 {
   "connection_test": true,
   "connection_test_contract": "silo.auth.connection-test.v1",
-  "connection_test_config_keys": ["ldap"],
-  "connection_test_ack_claim": "silo_connection_test_ok",
-  "connection_test_response_contract_claim": "silo_connection_test_contract"
+  "connection_test_config_keys": ["ldap"]
 }
 ```
 
-The host sends `connection_test=true` together with `connection_test_contract=silo.auth.connection-test.v1`. A successful probe explicitly returns:
+The host sends `connection_test=true` together with `connection_test_contract=silo.auth.connection-test.v1`. The v1 response names are fixed. A successful probe explicitly returns:
 
 ```json
 {
@@ -112,14 +110,11 @@ The capability advertises:
 ```json
 {
   "managed_role_contract": "silo.auth.managed-role.v1",
-  "role_contract_claim": "silo_role_contract",
-  "role_managed_claim": "silo_role_managed",
-  "role_claim": "silo_role",
   "role_values": ["user", "admin"]
 }
 ```
 
-A role-managed successful login returns all three required values:
+The v1 response names are fixed. A role-managed successful login returns all three required values:
 
 ```json
 {

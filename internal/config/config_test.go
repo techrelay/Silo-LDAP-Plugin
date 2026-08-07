@@ -87,6 +87,20 @@ func TestDecodeRejectsFractionalTimeout(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsStringTimeout(t *testing.T) {
+	value, err := structpb.NewStruct(map[string]any{
+		"url":             "ldaps://ldap.example.com:636",
+		"base_dn":         "dc=example,dc=com",
+		"timeout_seconds": "15",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Decode([]*pluginv1.ConfigEntry{{Key: EntryKey, Value: value}}); err == nil {
+		t.Fatal("expected string timeout to be rejected")
+	}
+}
+
 func TestDecodeRejectsUnknownField(t *testing.T) {
 	value, err := structpb.NewStruct(map[string]any{
 		"url":        "ldaps://ldap.example.com:636",

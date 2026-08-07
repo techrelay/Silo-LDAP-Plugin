@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -121,13 +120,8 @@ func validateValueTypes(values map[string]any) error {
 			continue
 		}
 		if key == "timeout_seconds" {
-			switch typed := value.(type) {
-			case float64:
-				if math.Trunc(typed) != typed {
-					return fmt.Errorf("LDAP configuration field %q must be an integer", key)
-				}
-			case int, int32, int64:
-			default:
+			typed, ok := value.(float64)
+			if !ok || math.Trunc(typed) != typed {
 				return fmt.Errorf("LDAP configuration field %q must be an integer", key)
 			}
 			continue
@@ -193,11 +187,7 @@ func stringValue(values map[string]any, key, fallback string) string {
 	if !ok || value == nil {
 		return fallback
 	}
-	text, ok := value.(string)
-	if !ok {
-		return fallback
-	}
-	return strings.TrimSpace(text)
+	return strings.TrimSpace(value.(string))
 }
 
 func rawStringValue(values map[string]any, key, fallback string) string {
@@ -205,11 +195,7 @@ func rawStringValue(values map[string]any, key, fallback string) string {
 	if !ok || value == nil {
 		return fallback
 	}
-	text, ok := value.(string)
-	if !ok {
-		return fallback
-	}
-	return text
+	return value.(string)
 }
 
 func boolValue(values map[string]any, key string, fallback bool) bool {
@@ -217,11 +203,7 @@ func boolValue(values map[string]any, key string, fallback bool) bool {
 	if !ok || value == nil {
 		return fallback
 	}
-	result, ok := value.(bool)
-	if !ok {
-		return fallback
-	}
-	return result
+	return value.(bool)
 }
 
 func intValue(values map[string]any, key string, fallback int) int {
@@ -229,22 +211,7 @@ func intValue(values map[string]any, key string, fallback int) int {
 	if !ok || value == nil {
 		return fallback
 	}
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case int:
-		return typed
-	case int32:
-		return int(typed)
-	case int64:
-		return int(typed)
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
-		if err == nil {
-			return parsed
-		}
-	}
-	return fallback
+	return int(value.(float64))
 }
 
 func splitList(value string) []string {

@@ -1,8 +1,8 @@
 # Contributing to Silo LDAP Plugin
 
 This plugin is part of the Silo ecosystem. The same contribution rules apply here as in the
-main [silo-server](https://github.com/techrelay/silo-server) repo. Read
-[CONTRIBUTING.md](https://github.com/techrelay/silo-server/blob/main/CONTRIBUTING.md) there first
+upstream [silo-server](https://github.com/Silo-Server/silo-server) repo. Read
+[CONTRIBUTING.md](https://github.com/Silo-Server/silo-server/blob/main/CONTRIBUTING.md) there first
 — especially the sections on AI slop, disclosure, and verification.
 
 ## The short version

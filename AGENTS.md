@@ -60,9 +60,16 @@ as ordinary failed logins.
 
 ## Group matching
 
-When both configured and returned group values parse as LDAP DNs, compare them with
-`ldap.DN.Equal`; do not reduce DNs to lowercase strings. The fallback case-insensitive string
-comparison exists only for directories using a non-DN custom group attribute.
+When both configured and returned group values parse as LDAP DNs, compare them structurally.
+RDN ordering remains significant, while attributes within a multi-valued RDN are matched by
+attribute type and value rather than by position. Attribute types and values are compared
+case-insensitively for practical Active Directory, Synology, and OpenLDAP group matching. Do not
+replace this with raw lowercase-string comparison or `ldap.DN.Equal`, whose attribute-value
+behavior does not satisfy this interoperability requirement.
+
+If either value is not a valid DN, fall back to case-insensitive string comparison for directories
+using a non-DN custom group attribute. This comparator is intentionally practical; it is not a
+complete implementation of every schema-specific LDAP matching rule.
 
 Connection checks must not require read access to configured group objects. Runtime authentication
 reads group values from the user entry, so a connection probe should validate only behavior needed
@@ -78,9 +85,9 @@ contract tokens as protocol versions. Do not add or consume unversioned magic cl
 
 Contract: `silo.auth.connection-test.v1`
 
-The manifest advertises the contract, owning config key, acknowledgement claim, and response
-contract claim. The provider only interprets a connection probe when both `connection_test=true`
-and the exact v1 contract are present. A successful probe returns both:
+The manifest advertises the contract and owning config key. The provider only interprets a
+connection probe when both `connection_test=true` and the exact v1 contract are present. The v1
+response claim names are fixed. A successful probe returns both:
 
 - `silo_connection_test_ok=true`
 - `silo_connection_test_contract=silo.auth.connection-test.v1`
@@ -88,6 +95,9 @@ and the exact v1 contract are present. A successful probe returns both:
 ### Managed role v1
 
 Contract: `silo.auth.managed-role.v1`
+
+The manifest advertises this contract and the supported role values. The v1 response claim names
+are fixed.
 
 When role synchronization is enabled, a successful login returns all of:
 
@@ -114,5 +124,5 @@ identity and a later attribute change is detectable.
 Conventional Commit subjects (`feat(ldap): add group DN validation`). One concern per PR.
 
 AI-use disclosure is required. Follow the same disclosure block used in the main
-[silo-server](https://github.com/techrelay/silo-server) repo — tool, exact model ID, involvement
+[silo-server](https://github.com/Silo-Server/silo-server) repo — tool, exact model ID, involvement
 level, and adversarial review summary. Undisclosed AI use gets the PR closed.

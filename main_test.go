@@ -51,17 +51,40 @@ func TestManifestAdvertisesRuntimeHostContracts(t *testing.T) {
 	}
 	metadata := authCapability.GetMetadata().AsMap()
 	checks := map[string]any{
-		"connection_test_contract":                connectionTestContractV1,
-		"connection_test_ack_claim":               connectionTestAckClaimKey,
-		"connection_test_response_contract_claim": connectionTestResponseContractClaimKey,
-		"managed_role_contract":                   siloRoleContractV1,
-		"role_contract_claim":                     siloRoleContractClaimKey,
-		"role_managed_claim":                      siloRoleManagedClaimKey,
-		"role_claim":                              siloRoleClaimKey,
+		"connection_test_contract": connectionTestContractV1,
+		"managed_role_contract":    siloRoleContractV1,
 	}
 	for key, want := range checks {
 		if got := metadata[key]; got != want {
 			t.Fatalf("manifest metadata %q = %#v, want %#v", key, got, want)
+		}
+	}
+	if enabled, ok := metadata["connection_test"].(bool); !ok || !enabled {
+		t.Fatalf("manifest connection_test = %#v, want true", metadata["connection_test"])
+	}
+	assertStringList := func(key string, want []string) {
+		t.Helper()
+		raw, ok := metadata[key].([]any)
+		if !ok || len(raw) != len(want) {
+			t.Fatalf("manifest metadata %q = %#v, want %v", key, metadata[key], want)
+		}
+		for index, value := range raw {
+			if value != want[index] {
+				t.Fatalf("manifest metadata %q = %#v, want %v", key, raw, want)
+			}
+		}
+	}
+	assertStringList("connection_test_config_keys", []string{"ldap"})
+	assertStringList("role_values", []string{"user", "admin"})
+	for _, key := range []string{
+		"connection_test_ack_claim",
+		"connection_test_response_contract_claim",
+		"role_contract_claim",
+		"role_managed_claim",
+		"role_claim",
+	} {
+		if _, exists := metadata[key]; exists {
+			t.Fatalf("manifest must not advertise configurable v1 response field %q", key)
 		}
 	}
 }
