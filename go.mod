@@ -1,4 +1,4 @@
-module github.com/zippyy/SiloMediaServer-LDAP
+module github.com/techrelay/Silo-LDAP-Plugin
 
 go 1.26.0
 
