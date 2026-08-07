@@ -34,26 +34,32 @@ func TestManifestIsValid(t *testing.T) {
 	}
 }
 
-func TestConnectionTestRequested(t *testing.T) {
-	metadata, err := structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
+func TestConnectionTestRequestedRequiresContract(t *testing.T) {
+	metadata, err := structpb.NewStruct(map[string]any{
+		connectionTestMetadataKey:         true,
+		connectionTestContractMetadataKey: connectionTestContractV1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !connectionTestRequested(metadata) {
-		t.Fatal("expected connection-test metadata to be detected")
+		t.Fatal("expected versioned connection-test metadata to be detected")
 	}
 
-	metadata, err = structpb.NewStruct(map[string]any{connectionTestMetadataKey: false})
+	metadata, err = structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if connectionTestRequested(metadata) {
-		t.Fatal("unexpected connection-test detection")
+		t.Fatal("connection test without contract must not be accepted")
 	}
 }
 
 func TestConnectionCheckReturnsExplicitAck(t *testing.T) {
-	metadata, err := structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
+	metadata, err := structpb.NewStruct(map[string]any{
+		connectionTestMetadataKey:         true,
+		connectionTestContractMetadataKey: connectionTestContractV1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +70,12 @@ func TestConnectionCheckReturnsExplicitAck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate returned error: %v", err)
 	}
-	if response.GetClaims().AsMap()[connectionTestAckClaimKey] != true {
-		t.Fatalf("connection-test response = %#v, want %s=true", response.GetClaims().AsMap(), connectionTestAckClaimKey)
+	claims := response.GetClaims().AsMap()
+	if claims[connectionTestAckClaimKey] != true {
+		t.Fatalf("connection-test response = %#v, want %s=true", claims, connectionTestAckClaimKey)
+	}
+	if claims[connectionTestResponseContractClaimKey] != connectionTestContractV1 {
+		t.Fatalf("connection-test response contract = %#v", claims[connectionTestResponseContractClaimKey])
 	}
 }
 
@@ -95,7 +105,10 @@ func TestAuthenticationFailureDoesNotExposeLDAPDetails(t *testing.T) {
 }
 
 func TestConnectionFailureDoesNotExposeLDAPDetails(t *testing.T) {
-	metadata, err := structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
+	metadata, err := structpb.NewStruct(map[string]any{
+		connectionTestMetadataKey:         true,
+		connectionTestContractMetadataKey: connectionTestContractV1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +149,7 @@ func TestInvalidCredentialsRemainIndistinguishable(t *testing.T) {
 	}
 }
 
-func TestRoleClaimIsMarkedAsManaged(t *testing.T) {
+func TestRoleClaimIsMarkedAndVersioned(t *testing.T) {
 	server := &authServer{}
 	server.SetAuthenticator(stubLDAPAuthenticator{user: &ldapauth.User{
 		Subject:     "objectguid:0102",
@@ -158,5 +171,8 @@ func TestRoleClaimIsMarkedAsManaged(t *testing.T) {
 	}
 	if got := claims[siloRoleManagedClaimKey]; got != true {
 		t.Fatalf("managed role marker = %#v, want true", got)
+	}
+	if got := claims[siloRoleContractClaimKey]; got != siloRoleContractV1 {
+		t.Fatalf("managed role contract = %#v, want %q", got, siloRoleContractV1)
 	}
 }
