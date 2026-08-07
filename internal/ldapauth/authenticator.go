@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
-	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
+	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
 )
 
 var (

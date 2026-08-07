@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
-	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
+	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
 )
 
 func TestGroupsAllowed(t *testing.T) {
