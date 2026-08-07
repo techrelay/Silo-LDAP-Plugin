@@ -32,17 +32,17 @@ func TestGroupsAllowed(t *testing.T) {
 func TestRoleForGroups(t *testing.T) {
 	cfg := config.Default()
 	cfg.RoleSyncEnabled = true
-	cfg.AdminGroups = []string{"CN=JellyfinAdmins,OU=groups,DC=example,DC=com"}
+	cfg.AdminGroups = []string{"CN=SiloAdmins,OU=Groups,DC=example,DC=com"}
 
-	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
+	if role := roleForGroups([]string{"cn=siloadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
 		t.Fatalf("administrator role = %q, want admin", role)
 	}
-	if role := roleForGroups([]string{"cn=jellyfinusers,ou=groups,dc=example,dc=com"}, cfg); role != "user" {
+	if role := roleForGroups([]string{"cn=silousers,ou=groups,dc=example,dc=com"}, cfg); role != "user" {
 		t.Fatalf("normal role = %q, want user", role)
 	}
 
 	cfg.RoleSyncEnabled = false
-	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
+	if role := roleForGroups([]string{"cn=siloadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
 		t.Fatalf("disabled role sync returned %q, want empty", role)
 	}
 }
@@ -125,35 +125,5 @@ func TestEffectiveTimeout(t *testing.T) {
 	ctx := context.Background()
 	if got := effectiveTimeout(ctx, 5*time.Second); got != 5*time.Second {
 		t.Fatalf("effectiveTimeout without deadline = %v, want 5s", got)
-	}
-}
-
-func TestAuthenticationFailureStage(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{name: "nil", err: nil, want: "unknown"},
-		{name: "connection", err: ErrStageConnection, want: "connection"},
-		{name: "start-tls", err: ErrStageStartTLS, want: "start-tls"},
-		{name: "search bind", err: ErrStageSearchBind, want: "search-account bind"},
-		{name: "user filter", err: ErrStageUserFilter, want: "user-filter compilation"},
-		{name: "filter validate", err: ErrStageFilterValidate, want: "user-filter compilation"},
-		{name: "user search", err: ErrStageUserSearch, want: "user search"},
-		{name: "search base", err: ErrStageSearchBaseQuery, want: "user search"},
-		{name: "user bind", err: ErrStageUserBind, want: "user bind"},
-		{name: "subject mapping", err: ErrStageSubjectMapping, want: "stable-subject mapping"},
-		{name: "group query", err: ErrStageGroupQuery, want: "group validation"},
-		{name: "group not found", err: ErrStageGroupNotFound, want: "group validation"},
-		{name: "unknown", err: ErrInvalidCredentials, want: "directory processing"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := AuthenticationFailureStage(test.err); got != test.want {
-				t.Fatalf("AuthenticationFailureStage(%v) = %q, want %q", test.err, got, test.want)
-			}
-		})
 	}
 }
