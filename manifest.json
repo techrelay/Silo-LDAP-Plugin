@@ -11,7 +11,7 @@
     "setup_markdown": "Install the plugin, open its configuration, enter the LDAP connection and user-search settings, and use Test connection before saving. Keep an existing local Silo administrator account for recovery before enabling role synchronization.",
     "homepage_url": "https://github.com/techrelay/Silo-LDAP-Plugin",
     "source_url": "https://github.com/techrelay/Silo-LDAP-Plugin",
-    "support_url": "https://github.com/techrelay/Silo-LDAP-Plugin/issues",
+    "support_url": "https://github.com/techrelay/Silo-LDAP-Plugin",
     "changelog_url": "https://github.com/techrelay/Silo-LDAP-Plugin/releases",
     "publisher_name": "Tech Relay",
     "publisher_url": "https://techrelay.xyz",
