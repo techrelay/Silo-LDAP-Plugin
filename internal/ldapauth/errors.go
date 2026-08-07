@@ -12,6 +12,7 @@ type FailureStage string
 
 const (
 	StageConnection        FailureStage = "connection"
+	StageStartTLS          FailureStage = "start-tls"
 	StageSearchAccountBind FailureStage = "search-account bind"
 	StageUserFilter        FailureStage = "user-filter compilation"
 	StageUserSearch        FailureStage = "user search"
