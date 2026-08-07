@@ -22,6 +22,7 @@ import (
 
 const (
 	connectionTestMetadataKey = "connection_test"
+	connectionTestAckClaimKey = "silo_connection_test_ok"
 	siloRoleClaimKey          = "silo_role"
 	siloRoleManagedClaimKey   = "silo_role_managed"
 )
@@ -89,7 +90,11 @@ func (s *authServer) Authenticate(ctx context.Context, req *pluginv1.Authenticat
 			slog.ErrorContext(ctx, "LDAP connection check failed", "stage", stage, "error", err)
 			return nil, status.Errorf(codes.Unavailable, "LDAP connection check failed during %s", stage)
 		}
-		return &pluginv1.AuthenticateResponse{}, nil
+		claims, err := structpb.NewStruct(map[string]any{connectionTestAckClaimKey: true})
+		if err != nil {
+			return nil, status.Error(codes.Internal, "could not construct LDAP connection-check response")
+		}
+		return &pluginv1.AuthenticateResponse{Claims: claims}, nil
 	}
 
 	user, err := authenticator.Authenticate(ctx, req.GetUsername(), req.GetPassword())
