@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -61,6 +62,9 @@ func Decode(entries []*pluginv1.ConfigEntry) (Config, bool, error) {
 	if values == nil {
 		return cfg, false, nil
 	}
+	if err := validateValueTypes(values); err != nil {
+		return Config{}, true, err
+	}
 
 	cfg.URL = stringValue(values, "url", cfg.URL)
 	cfg.StartTLS = boolValue(values, "start_tls", cfg.StartTLS)
@@ -87,6 +91,54 @@ func Decode(entries []*pluginv1.ConfigEntry) (Config, bool, error) {
 		return Config{}, true, err
 	}
 	return cfg, true, nil
+}
+
+func validateValueTypes(values map[string]any) error {
+	stringFields := map[string]struct{}{
+		"url": {}, "server_name": {}, "ca_pem": {}, "bind_dn": {}, "bind_password": {},
+		"base_dn": {}, "user_filter": {}, "subject_attribute": {}, "display_name_attribute": {},
+		"email_attribute": {}, "group_attribute": {}, "required_groups": {}, "group_match_mode": {},
+		"admin_groups": {}, "admin_group_match_mode": {},
+	}
+	boolFields := map[string]struct{}{
+		"start_tls": {}, "allow_insecure_plaintext": {}, "insecure_skip_verify": {}, "role_sync_enabled": {},
+	}
+
+	for key, value := range values {
+		if value == nil {
+			continue
+		}
+		if _, ok := stringFields[key]; ok {
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("LDAP configuration field %q must be a string", key)
+			}
+			continue
+		}
+		if _, ok := boolFields[key]; ok {
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("LDAP configuration field %q must be a boolean", key)
+			}
+			continue
+		}
+		if key == "timeout_seconds" {
+			switch typed := value.(type) {
+			case float64:
+				if math.Trunc(typed) != typed {
+					return fmt.Errorf("LDAP configuration field %q must be an integer", key)
+				}
+			case float32:
+				if float32(math.Trunc(float64(typed))) != typed {
+					return fmt.Errorf("LDAP configuration field %q must be an integer", key)
+				}
+			case int, int32, int64:
+			default:
+				return fmt.Errorf("LDAP configuration field %q must be an integer", key)
+			}
+			continue
+		}
+		return fmt.Errorf("unsupported LDAP configuration field %q", key)
+	}
+	return nil
 }
 
 func (c Config) Validate() error {
