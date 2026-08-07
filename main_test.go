@@ -34,6 +34,38 @@ func TestManifestIsValid(t *testing.T) {
 	}
 }
 
+func TestManifestAdvertisesRuntimeHostContracts(t *testing.T) {
+	manifest, err := publicmanifest.Load(manifestJSON)
+	if err != nil {
+		t.Fatalf("manifest is invalid: %v", err)
+	}
+	var authCapability *pluginv1.CapabilityDescriptor
+	for _, capability := range manifest.GetCapabilities() {
+		if capability.GetType() == "auth_provider.v1" && capability.GetId() == "ldap" {
+			authCapability = capability
+			break
+		}
+	}
+	if authCapability == nil || authCapability.GetMetadata() == nil {
+		t.Fatal("LDAP auth capability metadata is missing")
+	}
+	metadata := authCapability.GetMetadata().AsMap()
+	checks := map[string]any{
+		"connection_test_contract":                connectionTestContractV1,
+		"connection_test_ack_claim":               connectionTestAckClaimKey,
+		"connection_test_response_contract_claim": connectionTestResponseContractClaimKey,
+		"managed_role_contract":                   siloRoleContractV1,
+		"role_contract_claim":                     siloRoleContractClaimKey,
+		"role_managed_claim":                      siloRoleManagedClaimKey,
+		"role_claim":                              siloRoleClaimKey,
+	}
+	for key, want := range checks {
+		if got := metadata[key]; got != want {
+			t.Fatalf("manifest metadata %q = %#v, want %#v", key, got, want)
+		}
+	}
+}
+
 func TestConnectionTestRequestedRequiresContract(t *testing.T) {
 	metadata, err := structpb.NewStruct(map[string]any{
 		connectionTestMetadataKey:         true,
