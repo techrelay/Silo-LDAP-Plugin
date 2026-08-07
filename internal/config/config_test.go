@@ -89,8 +89,8 @@ func TestDecodeRejectsFractionalTimeout(t *testing.T) {
 
 func TestDecodeRejectsUnknownField(t *testing.T) {
 	value, err := structpb.NewStruct(map[string]any{
-		"url":       "ldaps://ldap.example.com:636",
-		"base_dn":   "dc=example,dc=com",
+		"url":        "ldaps://ldap.example.com:636",
+		"base_dn":    "dc=example,dc=com",
 		"unexpected": true,
 	})
 	if err != nil {
