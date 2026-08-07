@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	publicmanifest "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/manifest"
+	"github.com/techrelay/Silo-LDAP-Plugin/internal/ldapauth"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -34,7 +34,7 @@ func TestConnectionTestRequested(t *testing.T) {
 	}
 }
 
-func TestLDAPAuthenticationFailureStage(t *testing.T) {
+func TestAuthenticationFailureStageUsesSentinels(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
@@ -43,20 +43,23 @@ func TestLDAPAuthenticationFailureStage(t *testing.T) {
 		{name: "nil", err: nil, want: "unknown"},
 		{name: "deadline", err: context.DeadlineExceeded, want: "timeout"},
 		{name: "canceled", err: context.Canceled, want: "request"},
-		{name: "connection", err: errors.New("connect to LDAP: connection refused"), want: "connection"},
-		{name: "search account", err: errors.New("bind LDAP search account: invalid credentials"), want: "search-account bind"},
-		{name: "filter", err: errors.New("compile LDAP user filter: bad filter"), want: "user-filter compilation"},
-		{name: "search", err: errors.New("search LDAP user: operations error"), want: "user search"},
-		{name: "user bind", err: errors.New("bind LDAP user: unwilling to perform"), want: "user bind"},
-		{name: "subject", err: errors.New("LDAP subject attribute \"objectGUID\" is missing"), want: "stable-subject mapping"},
-		{name: "wrapped deadline", err: fmt.Errorf("connect to LDAP: %w", context.DeadlineExceeded), want: "timeout"},
+		{name: "connection", err: ldapauth.ErrStageConnection, want: "connection"},
+		{name: "search bind", err: ldapauth.ErrStageSearchBind, want: "search-account bind"},
+		{name: "user filter", err: ldapauth.ErrStageUserFilter, want: "user-filter compilation"},
+		{name: "filter validate", err: ldapauth.ErrStageFilterValidate, want: "user-filter compilation"},
+		{name: "user search", err: ldapauth.ErrStageUserSearch, want: "user search"},
+		{name: "search base", err: ldapauth.ErrStageSearchBaseQuery, want: "user search"},
+		{name: "user bind", err: ldapauth.ErrStageUserBind, want: "user bind"},
+		{name: "subject", err: ldapauth.ErrStageSubjectMapping, want: "stable-subject mapping"},
+		{name: "group query", err: ldapauth.ErrStageGroupQuery, want: "group validation"},
+		{name: "group not found", err: ldapauth.ErrStageGroupNotFound, want: "group validation"},
 		{name: "other", err: errors.New("unexpected directory error"), want: "directory processing"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := ldapAuthenticationFailureStage(test.err); got != test.want {
-				t.Fatalf("ldapAuthenticationFailureStage(%v) = %q, want %q", test.err, got, test.want)
+			if got := ldapauth.AuthenticationFailureStage(test.err); got != test.want {
+				t.Fatalf("AuthenticationFailureStage(%v) = %q, want %q", test.err, got, test.want)
 			}
 		})
 	}
