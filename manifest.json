@@ -30,6 +30,7 @@
       "auth_modes": ["password"],
       "metadata": {
         "connection_test": true,
+        "role_managed_claim": "silo_role_managed",
         "role_claim": "silo_role",
         "role_values": ["user", "admin"]
       }
