@@ -7,10 +7,15 @@ configuration block.
 
 ## Priorities
 
-Security first. Every code path must produce the same observable result for missing users, wrong
-passwords, and denied groups — including avoiding practical timing distinctions that leak directory
-membership. Credentials are never logged. Plaintext LDAP is rejected by default and requires an
+Security first. Failed authentication paths for a nonexistent/ambiguous account, a wrong password,
+and a denied group must expose the same external result and avoid obvious directory-operation-count
+differences. Credentials are never logged. Plaintext LDAP is rejected by default and requires an
 explicit dangerous opt-in.
+
+A successful password bind happens **before** group authorization. Never move group denial ahead of
+the password bind: doing so creates a timing oracle for allowed-group membership. A user search that
+does not produce exactly one entry uses the deliberate dummy-bind path before returning invalid
+credentials.
 
 ## Building and verifying
 
@@ -32,13 +37,18 @@ main.go                  → gRPC server, manifest, Configure/Authenticate handl
 internal/
   config/config.go       → Config struct, strict Decode from pluginpb.ConfigEntry, Validate
   ldapauth/
-    authenticator.go     → Authenticator: dial, bind, search, authenticate, CheckConnection
+    authenticator.go     → Authenticator: bounded LDAP operations, auth, CheckConnection
     errors.go            → typed failure stages and safe stage classification
 ```
 
 The `authServer` in `main.go` wraps the authenticator behind a `sync.RWMutex` — `Configure` swaps
 it atomically, and `Authenticate` reads it under the read lock so reconfigures never race with
 in-flight logins. The interface boundary is intentionally injectable for RPC behavior tests.
+
+`Authenticator` owns one overall operation deadline. Before each directory request it applies the
+remaining deadline as the LDAP request timeout, and a context watcher closes the underlying LDAP
+connection when the context expires so cancellation also interrupts TLS and blocked directory I/O.
+Do not replace this with independent full-duration timeouts per LDAP request.
 
 ## Error classification
 
@@ -48,11 +58,48 @@ logs. Do not return raw directory, TLS, hostname, DN, or search errors to unauth
 Invalid credentials and group denials return an empty authentication response so Silo treats them
 as ordinary failed logins.
 
-## Managed roles
+## Group matching
 
-When role synchronization is enabled, the plugin returns both `silo_role_managed=true` and a
-`silo_role` value of `user` or `admin`. The capability manifest advertises the claim names and
-allowed values. Do not emit managed-role claims when synchronization is disabled.
+When both configured and returned group values parse as LDAP DNs, compare them with
+`ldap.DN.Equal`; do not reduce DNs to lowercase strings. The fallback case-insensitive string
+comparison exists only for directories using a non-DN custom group attribute.
+
+Connection checks must not require read access to configured group objects. Runtime authentication
+reads group values from the user entry, so a connection probe should validate only behavior needed
+by that runtime path: transport/TLS, optional search-account bind, base DN, and the user search.
+
+## Versioned host extensions
+
+The current Silo plugin SDK does not provide typed connection-test or managed-role fields. Until it
+does, these integrations use explicit versioned extensions over `auth_provider.v1`. Treat the
+contract tokens as protocol versions. Do not add or consume unversioned magic claims.
+
+### Connection test v1
+
+Contract: `silo.auth.connection-test.v1`
+
+The manifest advertises the contract, owning config key, acknowledgement claim, and response
+contract claim. The provider only interprets a connection probe when both `connection_test=true`
+and the exact v1 contract are present. A successful probe returns both:
+
+- `silo_connection_test_ok=true`
+- `silo_connection_test_contract=silo.auth.connection-test.v1`
+
+### Managed role v1
+
+Contract: `silo.auth.managed-role.v1`
+
+When role synchronization is enabled, a successful login returns all of:
+
+- `silo_role_contract=silo.auth.managed-role.v1`
+- `silo_role_managed=true`
+- `silo_role=user|admin`
+
+Do not emit managed-role claims when synchronization is disabled. A bare `silo_role` claim has no
+host authorization meaning.
+
+If the Silo SDK gains typed equivalents for either extension, migrate to those SDK types instead of
+inventing a second convention.
 
 ## Stable subjects
 
