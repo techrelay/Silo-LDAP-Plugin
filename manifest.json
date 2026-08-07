@@ -1,18 +1,18 @@
 {
   "plugin_id": "techrelay.auth.ldap",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
   "category": "Authentication",
   "presentation": {
     "display_name": "LDAP Authentication",
-    "summary": "Authenticate Silo users through LDAP, Synology LDAP Server, or Active Directory.",
-    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, direct group allowlisting, connection testing, Active Directory group-to-role synchronization, and automatic Silo account provisioning.",
-    "setup_markdown": "Install the plugin, open its configuration, enter your LDAP connection and user-search settings, and use Test connection before saving. For Active Directory role synchronization, use the user group as the sign-in allowlist and configure the administrator group in Role synchronization. Keep an existing local Silo administrator account for recovery.",
-    "homepage_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
-    "source_url": "https://github.com/zippyy/SiloMediaServer-LDAP",
-    "support_url": "https://github.com/zippyy/SiloMediaServer-LDAP/issues",
-    "changelog_url": "https://github.com/zippyy/SiloMediaServer-LDAP/releases",
+    "summary": "Authenticate Silo users through LDAP or Active Directory.",
+    "description_markdown": "Adds password-based LDAP authentication to Silo. Supports LDAPS, StartTLS, stable external identities, direct group allowlisting, connection testing, and optional directory-group to Silo-role synchronization.",
+    "setup_markdown": "Install the plugin, open its configuration, enter the LDAP connection and user-search settings, and use Test connection before saving. Keep an existing local Silo administrator account for recovery before enabling role synchronization.",
+    "homepage_url": "https://github.com/techrelay/Silo-LDAP-Plugin",
+    "source_url": "https://github.com/techrelay/Silo-LDAP-Plugin",
+    "support_url": "https://github.com/techrelay/Silo-LDAP-Plugin/issues",
+    "changelog_url": "https://github.com/techrelay/Silo-LDAP-Plugin/releases",
     "publisher_name": "Tech Relay",
     "publisher_url": "https://techrelay.xyz",
     "license_spdx": "MIT"
@@ -28,7 +28,11 @@
       "display_name": "LDAP",
       "description": "Sign in with an LDAP directory account.",
       "auth_modes": ["password"],
-      "metadata": {"connection_test": true}
+      "metadata": {
+        "connection_test": true,
+        "role_claim": "silo_role",
+        "role_values": ["user", "admin"]
+      }
     }
   ],
   "global_config_schema": [
@@ -48,14 +52,14 @@
           {"key":"bind_password","label":"Search account password","control":"ADMIN_FORM_CONTROL_PASSWORD","secret":true},
           {"key":"base_dn","label":"User search base DN","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"dc=example,dc=com","required":true,"validation":{"min_length":1}},
           {"key":"user_filter","label":"User search filter","description":"{username} is safely escaped and replaced at login.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"(&(objectClass=person)(uid={username}))","required":true,"default_value":"(&(objectClass=person)(|(uid={username})(sAMAccountName={username})))","validation":{"min_length":1}},
-          {"key":"subject_attribute","label":"Stable subject attribute","description":"Use entryUUID for OpenLDAP/Synology LDAP or objectGUID for Active Directory.","control":"ADMIN_FORM_CONTROL_TEXT","required":true,"default_value":"entryUUID","validation":{"min_length":1}},
+          {"key":"subject_attribute","label":"Stable subject attribute","description":"Use entryUUID for OpenLDAP-compatible directories or objectGUID for Active Directory.","control":"ADMIN_FORM_CONTROL_TEXT","required":true,"default_value":"entryUUID","validation":{"min_length":1}},
           {"key":"display_name_attribute","label":"Display name attribute","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"displayName"},
           {"key":"email_attribute","label":"Email attribute","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"mail"},
           {"key":"group_attribute","label":"Group membership attribute","description":"Usually memberOf. Direct membership is evaluated.","control":"ADMIN_FORM_CONTROL_TEXT","default_value":"memberOf"},
-          {"key":"required_groups","label":"Sign-in group DNs","description":"Optional sign-in allowlist. Enter one group DN per line. For your AD, use CN=JellyfinUsers,OU=groups,DC=nbennett,DC=xyz. Administrator accounts must also satisfy this allowlist.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":4,"placeholder":"CN=JellyfinUsers,OU=groups,DC=example,DC=com"},
+          {"key":"required_groups","label":"Sign-in group DNs","description":"Optional sign-in allowlist. Enter one group DN per line. Administrator accounts must also satisfy this allowlist.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":4,"placeholder":"CN=SiloUsers,OU=Groups,DC=example,DC=com"},
           {"key":"group_match_mode","label":"Sign-in group match","control":"ADMIN_FORM_CONTROL_SELECT","default_value":"any","options":[{"value":"any","label":"Any configured group"},{"value":"all","label":"All configured groups"}]},
           {"key":"role_sync_enabled","label":"Synchronize Silo roles from LDAP","description":"When enabled, administrator-group members are Silo admins and all other allowed LDAP users are Silo users. Role changes are applied at login.","control":"ADMIN_FORM_CONTROL_SWITCH","default_value":false},
-          {"key":"admin_groups","label":"Administrator group DNs","description":"Enter one administrator group DN per line. For your AD, use CN=JellyfinAdmins,OU=groups,DC=nbennett,DC=xyz.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":3,"placeholder":"CN=JellyfinAdmins,OU=groups,DC=example,DC=com"},
+          {"key":"admin_groups","label":"Administrator group DNs","description":"Enter one administrator group DN per line.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":3,"placeholder":"CN=SiloAdmins,OU=Groups,DC=example,DC=com"},
           {"key":"admin_group_match_mode","label":"Administrator group match","control":"ADMIN_FORM_CONTROL_SELECT","default_value":"any","options":[{"value":"any","label":"Any configured administrator group"},{"value":"all","label":"All configured administrator groups"}]},
           {"key":"server_name","label":"TLS server name override","description":"Leave blank to use the hostname from the LDAP URL.","control":"ADMIN_FORM_CONTROL_TEXT","placeholder":"ldap.example.com"},
           {"key":"ca_pem","label":"Custom CA certificate","description":"Optional PEM certificate for a private LDAP certificate authority.","control":"ADMIN_FORM_CONTROL_TEXTAREA","multiline":true,"rows":6,"placeholder":"-----BEGIN CERTIFICATE-----"},
