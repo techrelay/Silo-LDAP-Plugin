@@ -126,10 +126,6 @@ func validateValueTypes(values map[string]any) error {
 				if math.Trunc(typed) != typed {
 					return fmt.Errorf("LDAP configuration field %q must be an integer", key)
 				}
-			case float32:
-				if float32(math.Trunc(float64(typed))) != typed {
-					return fmt.Errorf("LDAP configuration field %q must be an integer", key)
-				}
 			case int, int32, int64:
 			default:
 				return fmt.Errorf("LDAP configuration field %q must be an integer", key)
@@ -235,8 +231,6 @@ func intValue(values map[string]any, key string, fallback int) int {
 	}
 	switch typed := value.(type) {
 	case float64:
-		return int(typed)
-	case float32:
 		return int(typed)
 	case int:
 		return typed
