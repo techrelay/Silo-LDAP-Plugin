@@ -55,20 +55,11 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 		return withStage(StageUserFilter, err)
 	}
 
-	conn, err := a.dial(ctx)
+	conn, err := a.connectAndBind(ctx)
 	if err != nil {
-		return withStage(StageConnection, err)
-	}
-	defer conn.Close()
-
-	if a.config.BindDN != "" {
-		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
-			return withStage(StageSearchAccountBind, err)
-		}
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer conn.Close()
 
 	request := ldap.NewSearchRequest(
 		a.config.BaseDN,
@@ -110,7 +101,7 @@ func (a *Authenticator) checkConfiguredGroupDNs(conn *ldap.Conn) error {
 			return withStage(StageGroupValidation, err)
 		}
 		if len(result.Entries) != 1 {
-			return withStage(StageGroupValidation, fmt.Errorf("configured LDAP group was not found"))
+			return withStage(StageGroupValidation, errors.New("configured LDAP group was not found"))
 		}
 	}
 	return nil
@@ -125,20 +116,11 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		return nil, err
 	}
 
-	conn, err := a.dial(ctx)
+	conn, err := a.connectAndBind(ctx)
 	if err != nil {
-		return nil, withStage(StageConnection, err)
-	}
-	defer conn.Close()
-
-	if a.config.BindDN != "" {
-		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
-			return nil, withStage(StageSearchAccountBind, err)
-		}
-	}
-	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	defer conn.Close()
 
 	entry, err := a.findUser(conn, username)
 	if err != nil {
@@ -176,6 +158,30 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 	}, nil
 }
 
+// connectAndBind dials the LDAP directory, upgrades to TLS when configured,
+// and optionally authenticates with the search account.
+func (a *Authenticator) connectAndBind(ctx context.Context) (*ldap.Conn, error) {
+	conn, err := a.dial(ctx)
+	if err != nil {
+		var staged *StageError
+		if errors.As(err, &staged) {
+			return nil, err
+		}
+		return nil, withStage(StageConnection, err)
+	}
+	if a.config.BindDN != "" {
+		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
+			conn.Close()
+			return nil, withStage(StageSearchAccountBind, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
 func roleForGroups(groups []string, cfg config.Config) string {
 	if !cfg.RoleSyncEnabled {
 		return ""
@@ -208,7 +214,7 @@ func (a *Authenticator) dial(ctx context.Context) (*ldap.Conn, error) {
 	if parsed != nil && parsed.Scheme == "ldap" && a.config.StartTLS {
 		if err := conn.StartTLS(tlsConfig); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("start TLS: %w", err)
+			return nil, withStage(StageStartTLS, err)
 		}
 	}
 	return conn, nil
