@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
-	"github.com/zippyy/SiloMediaServer-LDAP/internal/config"
+	"github.com/techrelay/Silo-LDAP-Plugin/internal/config"
 )
 
 func TestGroupsAllowed(t *testing.T) {
@@ -30,17 +30,17 @@ func TestGroupsAllowed(t *testing.T) {
 func TestRoleForGroups(t *testing.T) {
 	cfg := config.Default()
 	cfg.RoleSyncEnabled = true
-	cfg.AdminGroups = []string{"CN=JellyfinAdmins,OU=groups,DC=example,DC=com"}
+	cfg.AdminGroups = []string{"CN=SiloAdmins,OU=groups,DC=example,DC=com"}
 
-	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
+	if role := roleForGroups([]string{"cn=siloadmins,ou=groups,dc=example,dc=com"}, cfg); role != "admin" {
 		t.Fatalf("administrator role = %q, want admin", role)
 	}
-	if role := roleForGroups([]string{"cn=jellyfinusers,ou=groups,dc=example,dc=com"}, cfg); role != "user" {
+	if role := roleForGroups([]string{"cn=silousers,ou=groups,dc=example,dc=com"}, cfg); role != "user" {
 		t.Fatalf("normal role = %q, want user", role)
 	}
 
 	cfg.RoleSyncEnabled = false
-	if role := roleForGroups([]string{"cn=jellyfinadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
+	if role := roleForGroups([]string{"cn=siloadmins,ou=groups,dc=example,dc=com"}, cfg); role != "" {
 		t.Fatalf("disabled role sync returned %q, want empty", role)
 	}
 }
