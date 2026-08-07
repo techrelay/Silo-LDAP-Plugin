@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ type fakeLDAPConnection struct {
 	bindErrors map[string]error
 	operations []string
 	timeout    time.Duration
-	closed     bool
+	closed     atomic.Bool
 }
 
 func (f *fakeLDAPConnection) Bind(username, _ string) error {
@@ -38,7 +39,7 @@ func (f *fakeLDAPConnection) Search(*ldap.SearchRequest) (*ldap.SearchResult, er
 
 func (f *fakeLDAPConnection) SetTimeout(timeout time.Duration) { f.timeout = timeout }
 func (f *fakeLDAPConnection) Close() error {
-	f.closed = true
+	f.closed.Store(true)
 	return nil
 }
 
@@ -151,6 +152,28 @@ func TestAuthenticateUnknownUserConsumesDummyBind(t *testing.T) {
 	}
 }
 
+func TestAuthenticateAmbiguousSearchConsumesDummyBind(t *testing.T) {
+	cfg := config.Default()
+	cfg.BaseDN = "dc=example,dc=com"
+	dummyDN := dummyBindDN(cfg.BaseDN, "duplicate")
+	conn := &fakeLDAPConnection{
+		searchErr: ldap.NewError(ldap.LDAPResultSizeLimitExceeded, errors.New("more than two matches")),
+		bindErrors: map[string]error{
+			dummyDN: ldap.NewError(ldap.LDAPResultNoSuchObject, errors.New("not found")),
+		},
+	}
+	auth := testAuthenticator(cfg, conn)
+
+	_, err := auth.Authenticate(context.Background(), "duplicate", "wrong-password")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Authenticate error = %v, want ErrInvalidCredentials", err)
+	}
+	want := []string{"search", "bind:" + dummyDN}
+	if len(conn.operations) != len(want) {
+		t.Fatalf("operations = %v, want %v", conn.operations, want)
+	}
+}
+
 func TestAuthenticateWrongPasswordUsesRealBind(t *testing.T) {
 	cfg := config.Default()
 	cfg.BaseDN = "dc=example,dc=com"
@@ -182,11 +205,11 @@ func TestCloseLDAPOnContextClosesConnection(t *testing.T) {
 	stop := closeLDAPOnContext(ctx, conn)
 	cancel()
 	deadline := time.Now().Add(time.Second)
-	for !conn.closed && time.Now().Before(deadline) {
+	for !conn.closed.Load() && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	stop()
-	if !conn.closed {
+	if !conn.closed.Load() {
 		t.Fatal("context cancellation did not close LDAP connection")
 	}
 }
