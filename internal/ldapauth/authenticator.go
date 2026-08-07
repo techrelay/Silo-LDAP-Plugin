@@ -91,7 +91,7 @@ func (a *Authenticator) CheckConnection(ctx context.Context) error {
 		nil,
 	)
 	if _, err := conn.Search(request); err != nil {
-		return withStage(StageUserSearch, err)
+		return operationError(ctx, StageUserSearch, err)
 	}
 	return nil
 }
@@ -132,6 +132,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		return nil, err
 	}
 	if err := conn.Bind(entry.DN, password); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 			return nil, ErrInvalidCredentials
 		}
@@ -172,6 +175,9 @@ func (a *Authenticator) maskUnknownUser(
 		return err
 	}
 	err := conn.Bind(dummyBindDN(a.config.BaseDN, username), password)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	if err == nil || isExpectedDummyBindRejection(err) {
 		return ErrInvalidCredentials
 	}
@@ -215,6 +221,9 @@ func isExpectedDummyBindRejection(err error) bool {
 func (a *Authenticator) connectAndBind(ctx context.Context) (ldapConnection, func(), error) {
 	conn, stop, err := a.openConnection(ctx)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, ctxErr
+		}
 		var staged *StageError
 		if errors.As(err, &staged) {
 			return nil, nil, err
@@ -234,7 +243,7 @@ func (a *Authenticator) connectAndBind(ctx context.Context) (ldapConnection, fun
 		if err := conn.Bind(a.config.BindDN, a.config.BindPassword); err != nil {
 			stop()
 			_ = conn.Close()
-			return nil, nil, withStage(StageSearchAccountBind, err)
+			return nil, nil, operationError(ctx, StageSearchAccountBind, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -276,6 +285,9 @@ func (a *Authenticator) dial(ctx context.Context) (ldapConnection, func(), error
 		ldap.DialWithTLSConfig(tlsConfig),
 	)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, ctxErr
+		}
 		return nil, nil, err
 	}
 	conn.SetTimeout(timeout)
@@ -286,7 +298,7 @@ func (a *Authenticator) dial(ctx context.Context) (ldapConnection, func(), error
 		if err := conn.StartTLS(tlsConfig); err != nil {
 			stop()
 			_ = conn.Close()
-			return nil, nil, withStage(StageStartTLS, err)
+			return nil, nil, operationError(ctx, StageStartTLS, err)
 		}
 	}
 	return conn, stop, nil
@@ -318,6 +330,13 @@ func (a *Authenticator) prepareOperation(ctx context.Context, conn ldapConnectio
 	}
 	conn.SetTimeout(effectiveTimeout(ctx, a.config.Timeout()))
 	return nil
+}
+
+func operationError(ctx context.Context, stage FailureStage, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return withStage(stage, err)
 }
 
 func (a *Authenticator) tlsConfig() (*tls.Config, error) {
@@ -373,9 +392,19 @@ func (a *Authenticator) findUser(ctx context.Context, conn ldapConnection, usern
 	)
 	result, err := conn.Search(request)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		// The client-side size limit is two entries. SizeLimitExceeded
+		// therefore proves the configured filter is ambiguous rather than
+		// indicating an infrastructure outage, so keep the external result
+		// indistinguishable from any other non-unique user lookup.
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
+			return nil, ErrInvalidCredentials
+		}
 		return nil, withStage(StageUserSearch, err)
 	}
-	if len(result.Entries) != 1 {
+	if result == nil || len(result.Entries) != 1 {
 		return nil, ErrInvalidCredentials
 	}
 	return result.Entries[0], nil
