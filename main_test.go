@@ -3,12 +3,30 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 	publicmanifest "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginsdk/manifest"
 	"github.com/techrelay/Silo-LDAP-Plugin/internal/ldapauth"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 )
+
+type stubLDAPAuthenticator struct {
+	checkErr error
+	user     *ldapauth.User
+	authErr  error
+}
+
+func (s stubLDAPAuthenticator) CheckConnection(context.Context) error {
+	return s.checkErr
+}
+
+func (s stubLDAPAuthenticator) Authenticate(context.Context, string, string) (*ldapauth.User, error) {
+	return s.user, s.authErr
+}
 
 func TestManifestIsValid(t *testing.T) {
 	if _, err := publicmanifest.Load(manifestJSON); err != nil {
@@ -17,7 +35,7 @@ func TestManifestIsValid(t *testing.T) {
 }
 
 func TestConnectionTestRequested(t *testing.T) {
-	metadata, err := structpb.NewStruct(map[string]any{"connection_test": true})
+	metadata, err := structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +43,7 @@ func TestConnectionTestRequested(t *testing.T) {
 		t.Fatal("expected connection-test metadata to be detected")
 	}
 
-	metadata, err = structpb.NewStruct(map[string]any{"connection_test": false})
+	metadata, err = structpb.NewStruct(map[string]any{connectionTestMetadataKey: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,33 +52,94 @@ func TestConnectionTestRequested(t *testing.T) {
 	}
 }
 
-func TestAuthenticationFailureStageUsesSentinels(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{name: "nil", err: nil, want: "unknown"},
-		{name: "deadline", err: context.DeadlineExceeded, want: "timeout"},
-		{name: "canceled", err: context.Canceled, want: "request"},
-		{name: "connection", err: ldapauth.ErrStageConnection, want: "connection"},
-		{name: "search bind", err: ldapauth.ErrStageSearchBind, want: "search-account bind"},
-		{name: "user filter", err: ldapauth.ErrStageUserFilter, want: "user-filter compilation"},
-		{name: "filter validate", err: ldapauth.ErrStageFilterValidate, want: "user-filter compilation"},
-		{name: "user search", err: ldapauth.ErrStageUserSearch, want: "user search"},
-		{name: "search base", err: ldapauth.ErrStageSearchBaseQuery, want: "user search"},
-		{name: "user bind", err: ldapauth.ErrStageUserBind, want: "user bind"},
-		{name: "subject", err: ldapauth.ErrStageSubjectMapping, want: "stable-subject mapping"},
-		{name: "group query", err: ldapauth.ErrStageGroupQuery, want: "group validation"},
-		{name: "group not found", err: ldapauth.ErrStageGroupNotFound, want: "group validation"},
-		{name: "other", err: errors.New("unexpected directory error"), want: "directory processing"},
-	}
+func TestAuthenticationFailureDoesNotExposeLDAPDetails(t *testing.T) {
+	server := &authServer{}
+	server.SetAuthenticator(stubLDAPAuthenticator{
+		authErr: &ldapauth.StageError{
+			Stage: ldapauth.StageConnection,
+			Err:   errors.New("dial tcp dc01.internal.example:636: connection refused"),
+		},
+	})
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := ldapauth.AuthenticationFailureStage(test.err); got != test.want {
-				t.Fatalf("AuthenticationFailureStage(%v) = %q, want %q", test.err, got, test.want)
-			}
-		})
+	_, err := server.Authenticate(context.Background(), &pluginv1.AuthenticateRequest{
+		Username: "alice",
+		Password: "not-logged",
+	})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("status code = %v, want %v", status.Code(err), codes.Unavailable)
+	}
+	message := status.Convert(err).Message()
+	if message != "LDAP authentication failed during connection" {
+		t.Fatalf("message = %q", message)
+	}
+	if strings.Contains(message, "dc01") || strings.Contains(message, "connection refused") {
+		t.Fatalf("response leaked directory details: %q", message)
+	}
+}
+
+func TestConnectionFailureDoesNotExposeLDAPDetails(t *testing.T) {
+	metadata, err := structpb.NewStruct(map[string]any{connectionTestMetadataKey: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &authServer{}
+	server.SetAuthenticator(stubLDAPAuthenticator{
+		checkErr: &ldapauth.StageError{
+			Stage: ldapauth.StageSearchAccountBind,
+			Err:   errors.New("LDAP Result Code 49: invalid service account password"),
+		},
+	})
+
+	_, err = server.Authenticate(context.Background(), &pluginv1.AuthenticateRequest{Metadata: metadata})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("status code = %v, want %v", status.Code(err), codes.Unavailable)
+	}
+	message := status.Convert(err).Message()
+	if message != "LDAP connection check failed during search-account bind" {
+		t.Fatalf("message = %q", message)
+	}
+	if strings.Contains(message, "password") || strings.Contains(message, "Result Code") {
+		t.Fatalf("response leaked directory details: %q", message)
+	}
+}
+
+func TestInvalidCredentialsRemainIndistinguishable(t *testing.T) {
+	server := &authServer{}
+	server.SetAuthenticator(stubLDAPAuthenticator{authErr: ldapauth.ErrInvalidCredentials})
+
+	response, err := server.Authenticate(context.Background(), &pluginv1.AuthenticateRequest{
+		Username: "missing-or-wrong",
+		Password: "wrong",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+	if response == nil || response.GetExternalSubject() != "" {
+		t.Fatalf("unexpected invalid-credential response: %#v", response)
+	}
+}
+
+func TestRoleClaimIsMarkedAsManaged(t *testing.T) {
+	server := &authServer{}
+	server.SetAuthenticator(stubLDAPAuthenticator{user: &ldapauth.User{
+		Subject:     "objectguid:0102",
+		Username:    "alice",
+		DisplayName: "Alice",
+		Role:        "admin",
+	}})
+
+	response, err := server.Authenticate(context.Background(), &pluginv1.AuthenticateRequest{
+		Username: "alice",
+		Password: "correct",
+	})
+	if err != nil {
+		t.Fatalf("Authenticate returned error: %v", err)
+	}
+	claims := response.GetClaims().AsMap()
+	if got := claims[siloRoleClaimKey]; got != "admin" {
+		t.Fatalf("role claim = %#v, want admin", got)
+	}
+	if got := claims[siloRoleManagedClaimKey]; got != true {
+		t.Fatalf("managed role marker = %#v, want true", got)
 	}
 }
